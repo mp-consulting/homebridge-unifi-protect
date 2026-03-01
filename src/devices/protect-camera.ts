@@ -9,7 +9,7 @@ import { toCamelCase } from '../protect-utils.js';
 import { LivestreamManager } from '../protect-livestream.js';
 import type { MessageSwitchInterface } from './protect-doorbell.js';
 import type { Nullable } from 'homebridge-plugin-utils';
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_TRANSCODE_BITRATE, PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE } from '../settings.js';
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_PROBESIZE, PROTECT_TRANSCODE_BITRATE, PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE } from '../settings.js';
 import type { ProtectCameraPackage } from './protect-camera-package.js';
 import { ProtectDevice } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';
@@ -108,7 +108,7 @@ export class ProtectCamera extends ProtectDevice {
     this.hints.logDoorbell = this.hasFeature('Log.Doorbell');
     this.hints.logHksv = this.hasFeature('Log.HKSV');
     this.hints.nightVision = this.ufp.featureFlags.hasInfrared && this.hasFeature('Device.NightVision');
-    this.hints.probesize = 16384;
+    this.hints.probesize = PROTECT_FFMPEG_PROBESIZE;
     this.hints.smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature('Motion.SmartDetect');
     this.hints.smartDetectSensors = this.hints.smartDetect && this.hasFeature('Motion.SmartDetect.ObjectSensors');
     this.hints.transcode = this.hasFeature('Video.Transcode');

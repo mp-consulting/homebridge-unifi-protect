@@ -35,6 +35,21 @@ export const PROTECT_DOORBELL_MESSAGE_DURATION = 60000;
 // Default duration, in milliseconds, of the trigger switch for a Protect doorbell, primarily for automation purposes.
 export const PROTECT_DOORBELL_TRIGGER_DURATION = 5000;
 
+// Default FFmpeg probesize, in bytes, for standard cameras. Balances latency vs. reliable stream detection.
+export const PROTECT_FFMPEG_PROBESIZE = 16384;
+
+// Default FFmpeg probesize, in bytes, for package cameras. Larger because the secondary camera stream needs more analysis.
+export const PROTECT_FFMPEG_PROBESIZE_PACKAGE = 32768;
+
+// Maximum FFmpeg probesize, in bytes, after automatic adjustments. Safety cap to prevent unbounded growth.
+export const PROTECT_FFMPEG_PROBESIZE_MAX = 5000000;
+
+// Number of consecutive probesize adjustments before making the override permanent instead of temporary.
+export const PROTECT_FFMPEG_PROBESIZE_ADJUSTMENT_THRESHOLD = 10;
+
+// Duration, in milliseconds, before a temporary probesize override resets back to the default (10 minutes).
+export const PROTECT_FFMPEG_PROBESIZE_OVERRIDE_TIMEOUT = 600000;
+
 // FFmpeg afftdn audio filter defaults - this setting uses FFTs to reduce noise in an audio signal by the number of decibels below.
 export const PROTECT_FFMPEG_AUDIO_FILTER_FFTNR = 14;
 

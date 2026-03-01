@@ -12,7 +12,8 @@ import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecT
   StreamRequestTypes } from 'homebridge';
 import { FfmpegOptions, FfmpegStreamingProcess, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, type HomebridgePluginLogging, type HomebridgeStreamingDelegate,
   type Nullable, RtpDemuxer, formatBps } from 'homebridge-plugin-utils';
-import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from './settings.js';
+import { PROTECT_FFMPEG_PROBESIZE_ADJUSTMENT_THRESHOLD, PROTECT_FFMPEG_PROBESIZE_MAX, PROTECT_FFMPEG_PROBESIZE_OVERRIDE_TIMEOUT,
+  PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from './settings.js';
 import type { ProtectCamera, RtspEntry } from './devices/index.js';
 import type { ProtectNvr } from './protect-nvr.js';
 import type { ProtectPlatform } from './protect-platform.js';
@@ -1218,23 +1219,23 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     this.probesizeOverride = this.probesize * 2;
 
     // Safety check to make sure this never gets too crazy.
-    if(this.probesizeOverride > 5000000) {
+    if(this.probesizeOverride > PROTECT_FFMPEG_PROBESIZE_MAX) {
 
-      this.probesizeOverride = 5000000;
+      this.probesizeOverride = PROTECT_FFMPEG_PROBESIZE_MAX;
     }
 
     this.log.error('The FFmpeg process ended unexpectedly due to issues with the media stream provided by the UniFi Protect livestream API. ' +
     'Adjusting the settings we use for FFmpeg %s to use safer values at the expense of some additional streaming startup latency.',
-    this.probesizeOverrideCount < 10 ? 'temporarily' : 'permanently');
+    this.probesizeOverrideCount < PROTECT_FFMPEG_PROBESIZE_ADJUSTMENT_THRESHOLD ? 'temporarily' : 'permanently');
 
     // If this happens often enough, keep the override in place permanently.
-    if(this.probesizeOverrideCount < 10) {
+    if(this.probesizeOverrideCount < PROTECT_FFMPEG_PROBESIZE_ADJUSTMENT_THRESHOLD) {
 
       this.probesizeOverrideTimeout = setTimeout(() => {
 
         this.probesizeOverride = 0;
         this.probesizeOverrideTimeout = undefined;
-      }, 1000 * 60 * 10);
+      }, PROTECT_FFMPEG_PROBESIZE_OVERRIDE_TIMEOUT);
     }
   }
 

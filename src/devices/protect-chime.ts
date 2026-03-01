@@ -194,13 +194,13 @@ export class ProtectChime extends ProtectDevice {
 
         case 'chime':
 
-          void this.playTone('chime', 'play-speaker');
+          void this.playTone('chime', 'play-speaker').catch((error: Error) => this.log.error('Unable to play chime tone: %s.', error.message));
 
           break;
 
         case 'buzzer':
 
-          void this.playTone('buzzer', 'play-buzzer');
+          void this.playTone('buzzer', 'play-buzzer').catch((error: Error) => this.log.error('Unable to play buzzer tone: %s.', error.message));
 
           break;
 

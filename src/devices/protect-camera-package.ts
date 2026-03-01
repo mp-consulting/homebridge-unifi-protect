@@ -6,6 +6,7 @@ import type { CharacteristicValue, Resolution } from 'homebridge';
 import { type Nullable , retry } from 'homebridge-plugin-utils';
 import { ProtectCamera, type RtspEntry } from './protect-camera.js';
 import type { ProtectHints } from './protect-device.js';
+import { PROTECT_FFMPEG_PROBESIZE_PACKAGE } from '../settings.js';
 import { ProtectReservedNames } from '../protect-types.js';
 import { ProtectStreamingDelegate } from '../protect-stream.js';
 
@@ -22,7 +23,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     const parentCamera = this.nvr.getDeviceById(this.ufp.id);
 
     this.flashlightState = false;
-    this.hints.probesize = 32768;
+    this.hints.probesize = PROTECT_FFMPEG_PROBESIZE_PACKAGE;
 
     // Inherit settings from our parent. These are the hint properties that package cameras share with their parent camera and should be kept in sync.
     const sharedHintKeys: (keyof ProtectHints)[] = [

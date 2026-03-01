@@ -331,7 +331,7 @@ export class ProtectSensor extends ProtectDevice {
 
     for(const sensor of [
 
-      { isDetected: 'externalLeakDetectedAt', isEnabled: 'isExternalEnabled', mqtt: 'leak-enternal',
+      { isDetected: 'externalLeakDetectedAt', isEnabled: 'isExternalEnabled', mqtt: 'leak-external',
         name: ' External ' + (isMoistureSensor ? 'Moisture' : 'Leak') + ' Sensor', subtype: ProtectReservedNames.LEAKSENSOR_EXTERNAL },
       { isDetected: 'leakDetectedAt', isEnabled: 'isInternalEnabled', mqtt: 'leak', subtype: ProtectReservedNames.LEAKSENSOR_INTERNAL },
     ]) {
@@ -373,7 +373,7 @@ export class ProtectSensor extends ProtectDevice {
       // Publish the state.
       if(this.ufp.isConnected) {
 
-        this.publish(sensor.mqtt, this.leakDetected.toString());
+        this.publish(sensor.mqtt, this.leakDetected(sensor.isDetected).toString());
       }
 
       count++;

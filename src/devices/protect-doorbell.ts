@@ -523,7 +523,7 @@ export class ProtectDoorbell extends ProtectCamera {
       }
 
       // Send it to the doorbell and we're done.
-      void this.setMessage(outboundPayload);
+      void this.setMessage(outboundPayload).catch((error: Error) => this.log.error('Unable to set doorbell message: %s.', error.message));
     });
 
     return true;

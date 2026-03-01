@@ -344,7 +344,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     if(this.protectCamera.hints.hksvRecordingIndicator && !this.protectCamera.ufp.ledSettings.isEnabled) {
 
       // We aren't going to wait for this to return in order to ensure we are handling the HKSV request as quickly as we can.
-      void this.protectCamera.setStatusLed(true);
+      void this.protectCamera.setStatusLed(true).catch((error: Error) => this.log.error('Unable to set status LED: %s.', error.message));
     }
 
     // Inform the user.
@@ -380,7 +380,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     if(this.protectCamera.hints.hksvRecordingIndicator && this.protectCamera.ufp.ledSettings.isEnabled) {
 
       // We aren't going to wait for this to return in order to ensure we are handling the HKSV request as quickly as we can.
-      void this.protectCamera.setStatusLed(false);
+      void this.protectCamera.setStatusLed(false).catch((error: Error) => this.log.error('Unable to clear status LED: %s.', error.message));
     }
 
     // If we have intentionally declined to respond to a recording event, we're done.
@@ -432,7 +432,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           recordedTime += minutes.toString() + ':';
         } else if(minutes > 0) {
 
-          recordedTime += (hours > 0) ? '0' : '' + minutes.toString() + ':';
+          recordedTime += ((hours > 0) ? '0' : '') + minutes.toString() + ':';
+        } else if(hours > 0) {
+
+          recordedTime += '00:';
         }
 
         if(recordedTime.length && (seconds < 10)) {
