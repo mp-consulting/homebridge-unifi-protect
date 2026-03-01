@@ -1,0 +1,484 @@
+/* @mp-consulting/homebridge-unifi-protect Custom UI Styles */
+
+/* ============================================================================
+   THEME CUSTOM PROPERTIES
+   ============================================================================ */
+
+:root {
+  --muted-color: #6c757d;
+  --card-bg: transparent;
+  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --card-hover-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  --card-header-bg: transparent;
+  --card-header-border: inherit;
+  --card-header-hover-bg: rgba(0, 0, 0, 0.02);
+  --list-item-border: inherit;
+  --progress-bg: rgba(0, 0, 0, 0.06);
+  --scope-device-bg: rgba(13, 202, 240, 0.04);
+  --scope-controller-bg: rgba(25, 135, 84, 0.04);
+  --scope-global-bg: rgba(255, 193, 7, 0.04);
+  --grouped-bar: rgba(0, 0, 0, 0.06);
+  --default-on-bg: rgba(25, 135, 84, 0.1);
+  --default-off-bg: rgba(108, 117, 125, 0.1);
+  --scope-hint-color: #6c757d;
+  --connector-line: #dee2e6;
+  --connector-active: #495057;
+}
+
+/* ============================================================================
+   SCREENS
+   ============================================================================ */
+
+#discoveryScreen,
+#setupScreen,
+#controllersScreen,
+#featureOptionsScreen,
+#supportScreen {
+  display: none;
+}
+
+/* ============================================================================
+   DISCOVERY
+   ============================================================================ */
+
+.spinner-border-sm {
+  display: none;
+}
+
+/* ============================================================================
+   GENERAL
+   ============================================================================ */
+
+.list-group {
+  border: 1px solid rgba(0, 0, 0, 0.125);
+  border-radius: 0.25rem;
+}
+
+/* ============================================================================
+   CARDS
+   ============================================================================ */
+
+.card {
+  border: none;
+  background-color: var(--card-bg);
+  box-shadow: var(--card-shadow);
+  transition: box-shadow 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: var(--card-hover-shadow);
+}
+
+.card-header {
+  font-weight: 600;
+  font-size: 0.95rem;
+  background-color: var(--card-header-bg) !important;
+  border-bottom-color: var(--card-header-border) !important;
+}
+
+/* ============================================================================
+   SCOPE SIDEBAR
+   ============================================================================ */
+
+.scope-sidebar {
+  position: sticky;
+  top: 0;
+}
+
+.scope-legend-bar {
+  display: inline-block;
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* ============================================================================
+   SCOPE CASCADE DIAGRAM (vertical)
+   ============================================================================ */
+
+.scope-cascade {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.scope-level {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  opacity: 0.3;
+  transition: opacity 0.3s ease;
+}
+
+.scope-level.active {
+  opacity: 1;
+}
+
+.scope-level.inherited {
+  opacity: 0.6;
+}
+
+.scope-dot {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: white;
+  transition: box-shadow 0.3s ease;
+}
+
+.scope-level[data-scope="global"] .scope-dot {
+  background-color: #ffc107;
+  color: #664d00;
+}
+
+.scope-level[data-scope="controller"] .scope-dot {
+  background-color: #198754;
+}
+
+.scope-level[data-scope="device"] .scope-dot {
+  background-color: #0dcaf0;
+  color: #055160;
+}
+
+.scope-level.active .scope-dot {
+  box-shadow: 0 0 0 3px rgba(var(--scope-rgb), 0.3);
+}
+
+.scope-level[data-scope="global"].active .scope-dot {
+  --scope-rgb: 255, 193, 7;
+}
+
+.scope-level[data-scope="controller"].active .scope-dot {
+  --scope-rgb: 25, 135, 84;
+}
+
+.scope-level[data-scope="device"].active .scope-dot {
+  --scope-rgb: 13, 202, 240;
+}
+
+.scope-text {
+  min-width: 0;
+}
+
+.scope-label {
+  font-weight: 600;
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.scope-hint {
+  font-size: 0.65rem;
+  color: var(--scope-hint-color);
+  line-height: 1.2;
+}
+
+.scope-connector {
+  display: flex;
+  justify-content: center;
+  padding-left: 15px;
+  height: 12px;
+}
+
+.scope-connector-line {
+  width: 2px;
+  height: 100%;
+  background: var(--connector-line);
+  transition: background 0.3s ease;
+}
+
+.scope-connector.active .scope-connector-line {
+  background: var(--connector-active);
+}
+
+/* ============================================================================
+   FEATURE OPTIONS - CATEGORY CARDS
+   ============================================================================ */
+
+#optionsContainer .card-header {
+  user-select: none;
+}
+
+#optionsContainer .card-header:hover {
+  background-color: var(--card-header-hover-bg) !important;
+}
+
+#optionsContainer .form-check-input {
+  cursor: pointer;
+}
+
+#optionsContainer .form-check-label {
+  cursor: pointer;
+}
+
+/* Category accent borders */
+.category-card {
+  border-left: 4px solid var(--category-color, #6c757d) !important;
+}
+
+/* Category icon circles */
+.category-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  border-radius: 50%;
+  font-size: 0.7rem;
+  color: white;
+  background-color: var(--category-color, #6c757d);
+}
+
+/* Category summary count */
+.category-summary {
+  font-size: 0.75rem;
+  color: #6c757d;
+  white-space: nowrap;
+}
+
+/* Category progress bar */
+.category-progress {
+  height: 4px;
+  background: var(--progress-bg);
+  border-radius: 2px;
+  overflow: hidden;
+  min-width: 40px;
+}
+
+.category-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background-color: var(--category-color, #6c757d);
+  transition: width 0.3s ease;
+}
+
+/* Toggle icon */
+.toggle-icon {
+  transition: transform 0.3s ease;
+  font-size: 0.8rem;
+  opacity: 0.4;
+}
+
+/* Collapse */
+.category-body {
+  display: none;
+}
+
+.category-body.open {
+  display: block;
+}
+
+/* ============================================================================
+   FEATURE OPTIONS - OPTION ITEMS
+   ============================================================================ */
+
+/* Scope-colored left border */
+.option-item {
+  border-left: 3px solid transparent !important;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.option-item.scope-device {
+  border-left-color: #0dcaf0 !important;
+  background-color: var(--scope-device-bg);
+}
+
+.option-item.scope-controller {
+  border-left-color: #198754 !important;
+  background-color: var(--scope-controller-bg);
+}
+
+.option-item.scope-global {
+  border-left-color: #ffc107 !important;
+  background-color: var(--scope-global-bg);
+}
+
+/* Non-default indicator */
+.option-item.non-default {
+  background-color: rgba(108, 117, 125, 0.03);
+}
+
+/* Default value indicator badge */
+.default-indicator {
+  font-size: 0.65rem;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.default-on {
+  background-color: var(--default-on-bg);
+  color: #198754;
+}
+
+.default-off {
+  background-color: var(--default-off-bg);
+  color: #6c757d;
+}
+
+/* Grouped/indented option */
+.option-grouped {
+  padding-left: 2rem !important;
+}
+
+.option-grouped::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--grouped-bar);
+}
+
+/* Option name styling */
+.option-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.option-description {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  opacity: 0.75;
+}
+
+/* Numeric value input for configurable options */
+.option-value {
+  max-width: 300px;
+}
+
+.option-value-input {
+  max-width: 80px;
+  text-align: center;
+}
+
+.option-value-unit {
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.option-value-default {
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+/* Reset button */
+.reset-option-btn {
+  opacity: 0.5;
+  transition: opacity 0.15s ease;
+}
+
+.option-item:hover .reset-option-btn {
+  opacity: 1;
+}
+
+/* Modified count summary */
+.modified-summary {
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+/* ============================================================================
+   LIST GROUP ITEMS
+   ============================================================================ */
+
+.list-group-item {
+  transition: background-color 0.15s ease;
+  position: relative;
+  border-color: var(--list-item-border);
+}
+
+.list-group-item i {
+  width: 1.25em;
+  text-align: center;
+}
+
+.list-group-item a {
+  text-decoration: none;
+}
+
+.list-group-item a:hover {
+  text-decoration: underline;
+}
+
+/* ============================================================================
+   DEVICE INFO PANEL
+   ============================================================================ */
+
+#deviceInfoPanel code {
+  font-size: 0.85rem;
+}
+
+/* ============================================================================
+   DARK MODE SUPPORT
+   ============================================================================ */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --muted-color: #a0a0a0;
+    --card-bg: rgba(255, 255, 255, 0.05);
+    --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    --card-hover-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --card-header-bg: rgba(255, 255, 255, 0.05);
+    --card-header-border: rgba(255, 255, 255, 0.1);
+    --card-header-hover-bg: rgba(255, 255, 255, 0.08);
+    --list-item-border: rgba(255, 255, 255, 0.08);
+    --progress-bg: rgba(255, 255, 255, 0.08);
+    --scope-device-bg: rgba(13, 202, 240, 0.08);
+    --scope-controller-bg: rgba(25, 135, 84, 0.08);
+    --scope-global-bg: rgba(255, 193, 7, 0.08);
+    --grouped-bar: rgba(255, 255, 255, 0.1);
+    --default-on-bg: rgba(25, 135, 84, 0.2);
+    --default-off-bg: rgba(108, 117, 125, 0.2);
+    --scope-hint-color: #a0a0a0;
+    --connector-line: rgba(255, 255, 255, 0.1);
+    --connector-active: rgba(255, 255, 255, 0.3);
+  }
+
+  .text-muted {
+    color: #a0a0a0 !important;
+  }
+}
+
+[data-theme="dark"],
+.dark-mode {
+  --muted-color: #a0a0a0;
+  --card-bg: rgba(255, 255, 255, 0.05);
+  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  --card-hover-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --card-header-bg: rgba(255, 255, 255, 0.05);
+  --card-header-border: rgba(255, 255, 255, 0.1);
+  --card-header-hover-bg: rgba(255, 255, 255, 0.08);
+  --list-item-border: rgba(255, 255, 255, 0.08);
+  --progress-bg: rgba(255, 255, 255, 0.08);
+  --scope-device-bg: rgba(13, 202, 240, 0.08);
+  --scope-controller-bg: rgba(25, 135, 84, 0.08);
+  --scope-global-bg: rgba(255, 193, 7, 0.08);
+  --grouped-bar: rgba(255, 255, 255, 0.1);
+  --default-on-bg: rgba(25, 135, 84, 0.2);
+  --default-off-bg: rgba(108, 117, 125, 0.2);
+  --scope-hint-color: #a0a0a0;
+  --connector-line: rgba(255, 255, 255, 0.1);
+  --connector-active: rgba(255, 255, 255, 0.3);
+}
+
+[data-theme="dark"] .text-muted,
+.dark-mode .text-muted {
+  color: #a0a0a0 !important;
+}
+
+[data-theme="dark"] .badge.bg-secondary,
+.dark-mode .badge.bg-secondary {
+  background-color: #6c757d !important;
+  color: #fff !important;
+}

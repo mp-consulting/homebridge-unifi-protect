@@ -1,0 +1,117 @@
+/* Copyright(C) 2022-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
+ *
+ * settings.test.ts: Unit tests for settings and constants in settings.ts.
+ */
+import {
+  PLUGIN_NAME,
+  PLATFORM_NAME,
+  PROTECT_CONTROLLER_REFRESH_INTERVAL,
+  PROTECT_CONTROLLER_RETRY_INTERVAL,
+  PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL,
+  PROTECT_DOORBELL_AUTHSENSOR_DURATION,
+  PROTECT_DOORBELL_CHIME_DURATION_DIGITAL,
+  PROTECT_DOORBELL_CHIME_DURATION_MECHANICAL,
+  PROTECT_DOORBELL_CHIME_SPEAKER_DURATION,
+  PROTECT_DOORBELL_MESSAGE_DURATION,
+  PROTECT_DOORBELL_TRIGGER_DURATION,
+  PROTECT_FFMPEG_AUDIO_FILTER_FFTNR,
+  PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS,
+  PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
+  PROTECT_LIVESTREAM_API_IDR_INTERVAL,
+  PROTECT_LIVESTREAM_RESTART_INTERVAL,
+  PROTECT_LIVESTREAM_TIMEOUT,
+  PROTECT_SEGMENT_RESOLUTION,
+  PROTECT_HKSV_TIMEOUT,
+  PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION,
+  PROTECT_M3U_PLAYLIST_PORT,
+  PROTECT_MOTION_DURATION,
+  PROTECT_OCCUPANCY_DURATION,
+  PROTECT_RPI_GPU_MINIMUM,
+  PROTECT_SNAPSHOT_CACHE_MAXAGE,
+  PROTECT_SNAPSHOT_TIMEOUT,
+  PROTECT_TRANSCODE_BITRATE,
+  PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE,
+} from '../src/settings.js';
+
+describe('settings', () => {
+
+  describe('plugin identity', () => {
+
+    it('PLUGIN_NAME equals "homebridge-unifi-protect"', () => {
+
+      expect(PLUGIN_NAME).toBe('homebridge-unifi-protect');
+    });
+
+    it('PLATFORM_NAME equals "UniFi Protect"', () => {
+
+      expect(PLATFORM_NAME).toBe('UniFi Protect');
+    });
+  });
+
+  describe('duration constants are positive numbers', () => {
+
+    const durationConstants: Record<string, number> = {
+      PROTECT_CONTROLLER_REFRESH_INTERVAL,
+      PROTECT_CONTROLLER_RETRY_INTERVAL,
+      PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL,
+      PROTECT_DOORBELL_AUTHSENSOR_DURATION,
+      PROTECT_DOORBELL_CHIME_DURATION_DIGITAL,
+      PROTECT_DOORBELL_CHIME_DURATION_MECHANICAL,
+      PROTECT_DOORBELL_CHIME_SPEAKER_DURATION,
+      PROTECT_DOORBELL_MESSAGE_DURATION,
+      PROTECT_DOORBELL_TRIGGER_DURATION,
+      PROTECT_FFMPEG_AUDIO_FILTER_FFTNR,
+      PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS,
+      PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
+      PROTECT_LIVESTREAM_API_IDR_INTERVAL,
+      PROTECT_LIVESTREAM_RESTART_INTERVAL,
+      PROTECT_LIVESTREAM_TIMEOUT,
+      PROTECT_SEGMENT_RESOLUTION,
+      PROTECT_HKSV_TIMEOUT,
+      PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION,
+      PROTECT_MOTION_DURATION,
+      PROTECT_OCCUPANCY_DURATION,
+      PROTECT_RPI_GPU_MINIMUM,
+      PROTECT_SNAPSHOT_CACHE_MAXAGE,
+      PROTECT_SNAPSHOT_TIMEOUT,
+      PROTECT_TRANSCODE_BITRATE,
+      PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE,
+    };
+
+    it.each(Object.entries(durationConstants))('%s is a positive number', (_name, value) => {
+
+      expect(typeof value).toBe('number');
+      expect(value).toBeGreaterThan(0);
+    });
+  });
+
+  describe('HomeKit timeout constraints', () => {
+
+    it('PROTECT_HKSV_TIMEOUT is less than 5000ms (HomeKit 5s threshold)', () => {
+
+      expect(PROTECT_HKSV_TIMEOUT).toBeLessThan(5000);
+    });
+
+    it('PROTECT_SNAPSHOT_TIMEOUT is less than 5000ms (HomeKit 5s threshold)', () => {
+
+      expect(PROTECT_SNAPSHOT_TIMEOUT).toBeLessThan(5000);
+    });
+  });
+
+  describe('derived constants', () => {
+
+    it('PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION equals PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000 * 2', () => {
+
+      expect(PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION).toBe(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000 * 2);
+    });
+  });
+
+  describe('port numbers are valid', () => {
+
+    it('PROTECT_M3U_PLAYLIST_PORT is a valid port number (> 0 and < 65536)', () => {
+
+      expect(PROTECT_M3U_PLAYLIST_PORT).toBeGreaterThan(0);
+      expect(PROTECT_M3U_PLAYLIST_PORT).toBeLessThan(65536);
+    });
+  });
+});

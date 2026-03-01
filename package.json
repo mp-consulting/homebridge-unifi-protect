@@ -1,0 +1,108 @@
+{
+  "name": "@mp-consulting/homebridge-unifi-protect",
+  "version": "1.0.0",
+  "displayName": "UniFi Protect",
+  "description": "A Homebridge plugin that brings full HomeKit support to the UniFi Protect ecosystem, including HomeKit Secure Video, multi-controller setups, and high-performance streaming.",
+  "author": {
+    "name": "MP Consulting",
+    "url": "https://github.com/mp-consulting"
+  },
+  "homepage": "https://github.com/mp-consulting/homebridge-unifi-protect#readme",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/mp-consulting/homebridge-unifi-protect.git"
+  },
+  "bugs": {
+    "url": "http://github.com/mp-consulting/homebridge-unifi-protect/issues"
+  },
+  "type": "module",
+  "engines": {
+    "homebridge": ">=1.8.0 || >=2.0.0",
+    "node": ">=20"
+  },
+  "keywords": [
+    "homebridge",
+    "homebridge-plugin",
+    "homebridge-unifi-protect",
+    "homekit",
+    "homekit secure video",
+    "hksv",
+    "camera",
+    "doorbell",
+    "ffmpeg",
+    "ubiquiti",
+    "unifi",
+    "unifi protect",
+    "motion",
+    "motion sensor",
+    "mqtt",
+    "protect",
+    "security",
+    "uck",
+    "uck g2",
+    "uck g2+",
+    "uck gen2",
+    "uck gen2+",
+    "udm",
+    "udm pro",
+    "udm-pro",
+    "unifi camera",
+    "unifi cloud key",
+    "unifi dream machine pro",
+    "unifi ffmpeg",
+    "unifi nvr",
+    "unifi-nvr",
+    "unifios",
+    "ai pro",
+    "g3 bullet",
+    "g3 flex",
+    "g3 instant",
+    "g4 bullet",
+    "g4 doorbell",
+    "g4 flex",
+    "g4 instant",
+    "g4 pro",
+    "g5 pro",
+    "g6 instant",
+    "rtsp"
+  ],
+  "scripts": {
+    "prebuild": "npm run clean",
+    "build": "tsc",
+    "clean": "shx rm -rf dist",
+    "lint": "eslint . --max-warnings=0",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "watch": "npm run build && npm link && nodemon",
+    "start": "npm run build && homebridge -U ./test/hbConfig -D -I -P .",
+    "postpublish": "npm run clean",
+    "prepublishOnly": "npm test && npm run lint && npm run build",
+    "monitor:events": "npx tsx scripts/event-schema-monitor.ts"
+  },
+  "main": "dist/index.js",
+  "dependencies": {
+    "@homebridge/plugin-ui-utils": "2.1.2",
+    "ffmpeg-for-homebridge": "2.2.1",
+    "homebridge-plugin-utils": "1.31.0",
+    "undici": "7.19.1",
+    "unifi-protect": "4.27.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/node": "^25.0.10",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^9.39.2",
+    "homebridge": "^2.0.0-beta.55",
+    "homebridge-config-ui-x": "^5.15.0",
+    "nodemon": "^3.1.11",
+    "shx": "0.4.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.53.1",
+    "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "@types/readable-stream": "4.0.23"
+  }
+}
