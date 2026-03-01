@@ -37,7 +37,10 @@ function formatRecordingDuration(timeshiftedSegments: number, segmentLength: num
       recordedTime += minutes.toString() + ':';
     } else if(minutes > 0) {
 
-      recordedTime += (hours > 0) ? '0' : '' + minutes.toString() + ':';
+      recordedTime += ((hours > 0) ? '0' : '') + minutes.toString() + ':';
+    } else if(hours > 0) {
+
+      recordedTime += '00:';
     }
 
     if(recordedTime.length && (seconds < 10)) {
@@ -154,6 +157,7 @@ describe('Recording Duration Formatting', () => {
       // 360 segments * 250ms = 90000ms = 90 seconds = 1:30.
       const result = formatRecordingDuration(360, SEGMENT_LENGTH);
 
+      expect(result.time).toBe('1:30');
       expect(result.unit).toBe('minute');
     });
 
@@ -162,6 +166,7 @@ describe('Recording Duration Formatting', () => {
       // 1200 segments * 250ms = 300000ms = 300 seconds = 5:00.
       const result = formatRecordingDuration(1200, SEGMENT_LENGTH);
 
+      expect(result.time).toBe('5:00');
       expect(result.unit).toBe('minute');
     });
 
@@ -170,23 +175,23 @@ describe('Recording Duration Formatting', () => {
       // 2460 segments * 250ms = 615000ms = 615 seconds = 10:15.
       const result = formatRecordingDuration(2460, SEGMENT_LENGTH);
 
+      expect(result.time).toBe('10:15');
       expect(result.unit).toBe('minute');
     });
   });
 
   describe('hour-range recordings', () => {
 
-    it('formats exactly 1 hour as minute-unit (minutes=0 skips minutes separator)', () => {
+    it('formats exactly 1 hour', () => {
 
-      // 14400 segments * 250ms = 3600 seconds. hours=1, minutes=0 → "01:00" (one colon).
+      // 14400 segments * 250ms = 3600 seconds. hours=1, minutes=0 → "01:00:00" (two colons).
       const result = formatRecordingDuration(14400, SEGMENT_LENGTH);
 
-      // When minutes=0, the minutes colon is not emitted, producing only one colon.
-      expect(result.time).toBe('01:00');
-      expect(result.unit).toBe('minute');
+      expect(result.time).toBe('01:00:00');
+      expect(result.unit).toBe('hour');
     });
 
-    it('formats hours with non-zero minutes as hour-unit', () => {
+    it('formats hours with non-zero minutes', () => {
 
       // 36000 segments * 250ms = 9000 seconds = 2h 30m. hours=2, minutes=30 → "02:30:00".
       const result = formatRecordingDuration(36000, SEGMENT_LENGTH);
@@ -204,21 +209,30 @@ describe('Recording Duration Formatting', () => {
       expect(result.unit).toBe('hour');
     });
 
-    it('formats 10+ hours with minutes=0 as minute-unit', () => {
+    it('formats 10+ hours exactly', () => {
 
-      // 144000 segments * 250ms = 36000 seconds = 10h. hours=10, minutes=0 → "10:00".
+      // 144000 segments * 250ms = 36000 seconds = 10h. hours=10, minutes=0 → "10:00:00".
       const result = formatRecordingDuration(144000, SEGMENT_LENGTH);
 
-      expect(result.time).toBe('10:00');
-      expect(result.unit).toBe('minute');
+      expect(result.time).toBe('10:00:00');
+      expect(result.unit).toBe('hour');
     });
 
-    it('formats 10+ hours with non-zero minutes as hour-unit', () => {
+    it('formats 10+ hours with non-zero minutes', () => {
 
       // 151200 segments * 250ms = 37800 seconds = 10h 30m. → "10:30:00".
       const result = formatRecordingDuration(151200, SEGMENT_LENGTH);
 
       expect(result.time).toBe('10:30:00');
+      expect(result.unit).toBe('hour');
+    });
+
+    it('formats 1 hour 5 minutes (single-digit minutes with hours)', () => {
+
+      // 15600 segments * 250ms = 3900 seconds = 1h 5m. → "01:05:00".
+      const result = formatRecordingDuration(15600, SEGMENT_LENGTH);
+
+      expect(result.time).toBe('01:05:00');
       expect(result.unit).toBe('hour');
     });
   });
@@ -273,6 +287,26 @@ describe('Recording Duration Formatting', () => {
 
       expect(result.time).toBe('30');
       expect(result.unit).toBe('second');
+    });
+  });
+
+  describe('operator precedence regression', () => {
+
+    it('correctly zero-pads single-digit minutes when hours are present', () => {
+
+      // 15600 segments * 250ms = 3900 seconds = 1h 5m 0s.
+      // Before fix: (hours > 0) ? '0' : '' + minutes.toString() + ':' produced '0' instead of '05:'.
+      const result = formatRecordingDuration(15600, SEGMENT_LENGTH);
+
+      expect(result.time).toBe('01:05:00');
+    });
+
+    it('does not zero-pad single-digit minutes when no hours', () => {
+
+      // 1320 segments * 250ms = 330 seconds = 5m 30s. No hours, so no zero-padding.
+      const result = formatRecordingDuration(1320, SEGMENT_LENGTH);
+
+      expect(result.time).toBe('5:30');
     });
   });
 });
