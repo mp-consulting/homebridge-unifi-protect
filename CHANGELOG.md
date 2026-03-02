@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 1.0.1 (2026-03-02)
+  * Fix: stop hardcoding 4K (3840x2160) as the source stream when hardware transcoding is enabled. The previous behavior overwhelmed the hardware transcoder on high-resolution cameras (e.g. G6 Bullet) when HomeKit requested 720p, causing frozen/still video frames. The stream selection now uses `biasHigher` to pick the next available resolution above the request (e.g. 1080p Medium) instead of always targeting the maximum.
+
 ## 1.0.0 (2026-03-01)
   * **Breaking change:** version reset to 1.0.0 under new maintainership. No API or configuration changes — existing configs will continue to work.
   * Fix: corrected an inverted `responseOk` check in UniFi Access lock handling that caused the lock state to revert on success and silently ignore failures.

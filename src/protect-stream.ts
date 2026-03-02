@@ -481,11 +481,12 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     // Find the best RTSP stream based on what we're looking for.
     if(isTranscoding) {
 
-      // If we have hardware transcoding enabled, we treat it uniquely and get the highest quality stream we can. Fixed-function hardware transcoders
-      // tend to perform better with higher bitrate sources. Wel also want to generally bias ourselves toward higher quality streams where possible.
+      // We bias toward a higher quality source stream than what HomeKit requests, since transcoders generally perform better with higher bitrate sources.
+      // We rely on biasHigher to select the next available resolution above the request rather than always targeting the maximum (e.g. 4K), which can
+      // overwhelm the transcoder when the downscale ratio is too large.
       rtspEntry ??= this.protectCamera.findRtsp(
-        (this.protectCamera.hints.hardwareTranscoding) ? 3840 : request.video.width,
-        (this.protectCamera.hints.hardwareTranscoding) ? 2160 : request.video.height,
+        request.video.width,
+        request.video.height,
         { biasHigher: true, maxPixels: this.ffmpegOptions.hostSystemMaxPixels },
       );
 
