@@ -36,6 +36,7 @@ import {
   PROTECT_SNAPSHOT_TIMEOUT,
   PROTECT_TRANSCODE_BITRATE,
   PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE,
+  PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO,
 } from '../src/settings.js';
 
 describe('settings', () => {
@@ -135,6 +136,36 @@ describe('settings', () => {
 
       expect(PROTECT_M3U_PLAYLIST_PORT).toBeGreaterThan(0);
       expect(PROTECT_M3U_PLAYLIST_PORT).toBeLessThan(65536);
+    });
+  });
+
+  describe('PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO', () => {
+
+    it('is a positive number greater than or equal to 1', () => {
+
+      expect(typeof PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO).toBe('number');
+      expect(PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO).toBeGreaterThanOrEqual(1);
+    });
+
+    it('at 2x, a 720p request allows 1440p but rejects 4K', () => {
+
+      const ratio = PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO;
+      const maxPixels = (1280 * ratio) * (720 * ratio);
+
+      // 1080p (1920x1080 = 2,073,600) should fit.
+      expect(1920 * 1080).toBeLessThanOrEqual(maxPixels);
+
+      // 4K (3840x2160 = 8,294,400) should be rejected.
+      expect(3840 * 2160).toBeGreaterThan(maxPixels);
+    });
+
+    it('at 2x, a 1080p request allows up to 4K', () => {
+
+      const ratio = PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO;
+      const maxPixels = (1920 * ratio) * (1080 * ratio);
+
+      // 4K (3840x2160 = 8,294,400) should fit exactly.
+      expect(3840 * 2160).toBeLessThanOrEqual(maxPixels);
     });
   });
 });

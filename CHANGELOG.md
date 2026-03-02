@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file. This projec
 
 ## 1.0.1 (2026-03-02)
   * Fix: stop hardcoding 4K (3840x2160) as the source stream when hardware transcoding is enabled. The previous behavior overwhelmed the hardware transcoder on high-resolution cameras (e.g. G6 Bullet) when HomeKit requested 720p, causing frozen/still video frames. The stream selection now uses `biasHigher` to pick the next available resolution above the request (e.g. 1080p Medium) instead of always targeting the maximum.
+  * Improvement: add a maximum downscale ratio (`PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO = 2`) that caps the source stream resolution relative to the HomeKit request. For example, a 720p request allows up to ~1440p input but rejects 4K (3x downscale). A 1080p request still allows 4K (2x). This adapts naturally to any camera and request combination without platform-specific configuration.
 
 ## 1.0.0 (2026-03-01)
   * **Breaking change:** version reset to 1.0.0 under new maintainership. No API or configuration changes — existing configs will continue to work.

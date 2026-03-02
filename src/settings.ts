@@ -100,6 +100,11 @@ export const PROTECT_SNAPSHOT_CACHE_MAXAGE = 90;
 // Snapshot retrieval timeout, in milliseconds. HomeKit has a strict 5 second threshold for communication, so we set this just below that.
 export const PROTECT_SNAPSHOT_TIMEOUT = 4990;
 
+// Maximum downscale ratio (per dimension) allowed when selecting a source stream for transcoding. Streams requiring a larger downscale are filtered out
+// before selection. For example, a ratio of 2 means a 720p request allows up to ~1440p input (2x), but rejects 4K (3x). This prevents overwhelming the
+// hardware transcoder with an excessively large resolution gap.
+export const PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO = 2;
+
 // Bitrate, in kilobits per second, to use when transcoding to local clients.
 export const PROTECT_TRANSCODE_BITRATE = 2000;
 

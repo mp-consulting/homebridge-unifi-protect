@@ -13,7 +13,7 @@ import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecT
 import { FfmpegOptions, FfmpegStreamingProcess, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, type HomebridgePluginLogging, type HomebridgeStreamingDelegate,
   type Nullable, RtpDemuxer, formatBps } from 'homebridge-plugin-utils';
 import { PROTECT_FFMPEG_PROBESIZE_ADJUSTMENT_THRESHOLD, PROTECT_FFMPEG_PROBESIZE_MAX, PROTECT_FFMPEG_PROBESIZE_OVERRIDE_TIMEOUT,
-  PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL } from './settings.js';
+  PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO } from './settings.js';
 import type { ProtectCamera, RtspEntry } from './devices/index.js';
 import type { ProtectNvr } from './protect-nvr.js';
 import type { ProtectPlatform } from './protect-platform.js';
@@ -483,11 +483,16 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
       // We bias toward a higher quality source stream than what HomeKit requests, since transcoders generally perform better with higher bitrate sources.
       // We rely on biasHigher to select the next available resolution above the request rather than always targeting the maximum (e.g. 4K), which can
-      // overwhelm the transcoder when the downscale ratio is too large.
+      // overwhelm the transcoder when the downscale ratio is too large. We cap the input resolution using a maximum downscale ratio relative to the
+      // requested resolution — e.g. with a 2x ratio, a 720p request allows up to ~1440p input but filters out 4K.
+      const maxWidth = request.video.width * PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO;
+      const maxHeight = request.video.height * PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO;
+      const maxPixels = Math.min(this.ffmpegOptions.hostSystemMaxPixels, maxWidth * maxHeight);
+
       rtspEntry ??= this.protectCamera.findRtsp(
         request.video.width,
         request.video.height,
-        { biasHigher: true, maxPixels: this.ffmpegOptions.hostSystemMaxPixels },
+        { biasHigher: true, maxPixels: maxPixels },
       );
 
       // If we have specified the bitrates we want to use when transcoding, let's honor those here.
