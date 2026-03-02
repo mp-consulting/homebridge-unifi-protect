@@ -8,7 +8,7 @@
     "url": "https://github.com/mp-consulting"
   },
   "homepage": "https://github.com/mp-consulting/homebridge-unifi-protect#readme",
-  "license": "MIT",
+  "license": "(ISC AND MIT)",
   "repository": {
     "type": "git",
     "url": "git://github.com/mp-consulting/homebridge-unifi-protect.git"

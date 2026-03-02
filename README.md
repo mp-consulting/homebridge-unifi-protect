@@ -12,6 +12,8 @@
 
 > Complete HomeKit support for the [UniFi Protect](https://ui.com/camera-security) ecosystem using [Homebridge](https://homebridge.io).
 
+> Originally based on [homebridge-unifi-protect](https://github.com/hjdhjd/homebridge-unifi-protect) by [HJD](https://github.com/hjdhjd), licensed under the ISC License. This fork has been substantially rewritten by [MP Consulting](https://github.com/mp-consulting).
+
 ## Overview
 
 A [Homebridge](https://homebridge.io) plugin that brings native HomeKit support to [UniFi Protect](https://ui.com/camera-security) devices. Provide your controller's IP address and credentials, and every supported device is automatically discovered and made available in HomeKit — cameras, doorbells, sensors, chimes, lights, and viewports.
@@ -129,7 +131,7 @@ npm test
 
 ## License
 
-[MIT](LICENSE.md) — Copyright (c) 2026 Mickael Palma
+Original work by [HJD](https://github.com/hjdhjd) under [ISC](LICENSE.md). Modifications by Mickael Palma under [MIT](LICENSE.md).
 
 ## Development
 
