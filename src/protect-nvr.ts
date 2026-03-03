@@ -9,7 +9,7 @@ import { ProtectCamera, ProtectChime, type ProtectDevice, ProtectDoorbell, Prote
   ProtectViewer } from './devices/index.js';
 import type { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig,
   ProtectViewerConfig } from 'unifi-protect';
-import type { ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from './protect-types.js';
+import type { ProtectDeviceCategory, ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from './protect-types.js';
 import { APIEvent } from 'homebridge';
 import { ProtectApi } from 'unifi-protect';
 import { ProtectDeviceCategories } from './protect-types.js';
@@ -18,6 +18,15 @@ import type { ProtectNvrOptions } from './protect-options.js';
 import type { ProtectPlatform } from './protect-platform.js';
 import { ProtectPlaylistServer } from './protect-playlist.js';
 import util from 'node:util';
+
+// Type-safe mapping from device category to the corresponding bootstrap array key.
+type BootstrapDeviceKey = `${ProtectDeviceCategory}s`;
+
+// Retrieve the device array from a bootstrap for a given category.
+function getBootstrapDevices(bootstrap: ProtectNvrBootstrap, category: ProtectDeviceCategory): ProtectDeviceConfigTypes[] {
+
+  return bootstrap[`${category}s` as BootstrapDeviceKey] as ProtectDeviceConfigTypes[];
+}
 
 export class ProtectNvr {
 
@@ -180,9 +189,6 @@ export class ProtectNvr {
       return;
     }
 
-    // Configure any NVR-specific settings.
-    this.configureNvr();
-
     // Initialize our liveviews.
     this.liveviews = new ProtectLiveviews(this);
 
@@ -247,12 +253,6 @@ export class ProtectNvr {
 
     // Kickoff our first round of bootstrap refreshes to ensure we stay in sync.
     bootstrapRefresh();
-  }
-
-  // Configure NVR-specific settings.
-  private configureNvr(): boolean {
-
-    return true;
   }
 
   // Create instances of Protect device types in our plugin.
@@ -322,7 +322,7 @@ export class ProtectNvr {
     }
 
     // We only support certain devices.
-    if(!ProtectDeviceCategories.includes(device.modelKey)) {
+    if(!(ProtectDeviceCategories as readonly string[]).includes(device.modelKey)) {
 
       // If we've already informed the user about this one, we're done.
       if(this.unsupportedDevices[device.mac]) {
@@ -407,8 +407,8 @@ export class ProtectNvr {
     }
 
     // Iterate through the list of device categories we know about and add them to HomeKit.
-    ProtectDeviceCategories.map(category => this.ufpApi.bootstrap && this.ufpApi.bootstrap[category + 's'] &&
-      ((this.ufpApi.bootstrap[category + 's'] as ProtectDeviceConfigTypes[] | undefined) ?? []).map(device => this.addHomeKitDevice(device)));
+    ProtectDeviceCategories.map(category => this.ufpApi.bootstrap &&
+      getBootstrapDevices(this.ufpApi.bootstrap, category).map(device => this.addHomeKitDevice(device)));
 
     // Remove Protect devices that are no longer found on this Protect NVR, but we still have in HomeKit.
     this.cleanupDevices();
@@ -463,7 +463,7 @@ export class ProtectNvr {
 
       // Check to see if the device still exists on the Protect controller and the user has not chosen to hide it,
       // or the user has chosen to make this a standalone accessory rather than a bridged one.
-      if((this.ufpApi.bootstrap[protectDevice.ufp.modelKey + 's'] as ProtectDeviceConfigTypes[] | undefined)?.some(x => x.mac === protectDevice.ufp.mac) &&
+      if(getBootstrapDevices(this.ufpApi.bootstrap, protectDevice.ufp.modelKey as ProtectDeviceCategory)?.some(x => x.mac === protectDevice.ufp.mac) &&
         protectDevice.hints.enabled && ((accessory._associatedHAPAccessory.bridged && !protectDevice.hints.standalone) ||
          (!accessory._associatedHAPAccessory.bridged && protectDevice.hints.standalone))) {
 
@@ -557,8 +557,8 @@ export class ProtectNvr {
 
     // See if we can pull the device's configuration details from our Protect device instance or the controller.
     const device = protectDevice?.ufp ??
-      ProtectDeviceCategories.flatMap<ProtectDeviceConfigTypes>(
-        category => (this.ufpApi.bootstrap?.[category + 's'] as ProtectDeviceConfigTypes[] | undefined) ?? [])
+      (this.ufpApi.bootstrap ? ProtectDeviceCategories.flatMap<ProtectDeviceConfigTypes>(
+        category => getBootstrapDevices(this.ufpApi.bootstrap as ProtectNvrBootstrap, category) ?? []) : [])
         .find(d => d.mac === accessory.context.mac);
 
     this.log.info('%s: Removing %s from HomeKit.%s',

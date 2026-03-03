@@ -3,7 +3,8 @@
  * protect-livestream.ts: Protect livestream API manager.
  */
 import { FfmpegLivestreamProcess, sleep } from 'homebridge-plugin-utils';
-import { PROTECT_LIVESTREAM_RESTART_INTERVAL, PROTECT_LIVESTREAM_TIMEOUT, PROTECT_SEGMENT_RESOLUTION } from './settings.js';
+import { PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL, PROTECT_LIVESTREAM_RESTART_INTERVAL, PROTECT_LIVESTREAM_TIMEOUT,
+  PROTECT_SEGMENT_RESOLUTION } from './settings.js';
 import type { ProtectCamera } from './devices/index.js';
 import type { ProtectLivestream } from 'unifi-protect';
 import type { RtspEntry } from './devices/protect-camera.js';
@@ -79,9 +80,13 @@ export class LivestreamManager {
   public shutdown(): void {
 
     // Cleanup all the listeners and shutdown our livestreams.
-    Object.values(this.segmentTimer).map(timer => clearTimeout(timer));
+    Object.values(this.segmentTimer).forEach(timer => clearTimeout(timer));
      
-    Object.values(this.livestreams).map(livestream => livestream.removeAllListeners() && livestream.stop());
+    Object.values(this.livestreams).forEach(livestream => {
+
+      livestream.removeAllListeners();
+      livestream.stop();
+    });
 
     this.eventHandlers = {};
     this.livestreams = {};
@@ -153,7 +158,7 @@ export class LivestreamManager {
         // If either the controller is offline/throttled or the camera isn't connected, let's retry again in a minute.
         if(!this.protectCamera.ufpApi.bootstrap || this.protectCamera.ufpApi.isThrottled || !this.protectCamera.isOnline) {
 
-          this.segmentTimer[index] = setTimeout(() => this.livestreams[index].emit('restart', true), 60 * 1000);
+          this.segmentTimer[index] = setTimeout(() => this.livestreams[index].emit('restart', true), PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL);
 
           return;
         }
@@ -212,7 +217,7 @@ export class LivestreamManager {
           clearTimeout(this.segmentTimer[index]);
 
           // Make sure we've got a good livestream before we reset our delay.
-          if((Date.now() - this.startTime[index]) > (60 * 1000)) {
+          if((Date.now() - this.startTime[index]) > PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL) {
 
             this.restartCount = 0;
             this.restartDelay[index] = PROTECT_LIVESTREAM_RESTART_INTERVAL;

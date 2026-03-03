@@ -113,7 +113,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     if(!(await this.protectCamera.livestream.start(rtspEntry, this._segmentLength))) {
 
       // Something went wrong, let's cleanup our event handlers and we're done.
-      Object.keys(this.eventHandlers).map(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
+      Object.keys(this.eventHandlers).forEach(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
 
       return false;
     }
@@ -146,7 +146,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
         this.protectCamera.livestream.stop(this.rtspEntry);
       }
 
-      Object.keys(this.eventHandlers).map(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
+      Object.keys(this.eventHandlers).forEach(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
     }
 
     this._buffer = [];

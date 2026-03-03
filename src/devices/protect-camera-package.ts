@@ -4,9 +4,9 @@
  */
 import type { CharacteristicValue, Resolution } from 'homebridge';
 import { type Nullable , retry } from 'homebridge-plugin-utils';
-import { ProtectCamera, type RtspEntry } from './protect-camera.js';
+import { ProtectCamera, formatResolution, type RtspEntry } from './protect-camera.js';
 import type { ProtectHints } from './protect-device.js';
-import { PROTECT_FFMPEG_PROBESIZE_PACKAGE } from '../settings.js';
+import { PROTECT_FFMPEG_PROBESIZE_PACKAGE, PROTECT_HOMEKIT_UPDATE_DELAY } from '../settings.js';
 import { ProtectReservedNames } from '../protect-types.js';
 import { ProtectStreamingDelegate } from '../protect-stream.js';
 
@@ -107,7 +107,7 @@ export class ProtectCameraPackage extends ProtectCamera {
 
       for(const entry of validResolutions) {
 
-        this.log.info('Mapping resolution: %s.', this.getResolution(entry) + ' => ' + this.getResolution(validResolutions[0]));
+        this.log.info('Mapping resolution: %s.', formatResolution(entry) + ' => ' + formatResolution(validResolutions[0]));
       }
     }
 
@@ -198,7 +198,7 @@ export class ProtectCameraPackage extends ProtectCamera {
       // If it's dark, we're done.
       if(!this.ufp.isDark) {
 
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, false), 50);
+        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, false), PROTECT_HOMEKIT_UPDATE_DELAY);
 
         return;
       }
@@ -237,7 +237,7 @@ export class ProtectCameraPackage extends ProtectCamera {
 
       channel: channel,
       lens: 2,
-      name: this.getResolution([ channel.width, channel.height, channel.fps ]) + ' (' + channel.name + ') [' +
+      name: formatResolution([ channel.width, channel.height, channel.fps ]) + ' (' + channel.name + ') [' +
         (this.ufp.videoCodec.replace('h265', 'hevc')).toUpperCase() + ']',
       resolution: [ channel.width, channel.height, channel.fps ],
       url:  'rtsps://' + this.nvr.config.address + ':' + this.nvr.ufp.ports.rtsps.toString() + '/' + channel.rtspAlias + '?enableSrtp',

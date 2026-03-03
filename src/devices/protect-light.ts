@@ -4,9 +4,25 @@
  */
 import type { CharacteristicValue, PlatformAccessory } from 'homebridge';
 import type { ProtectEventPacket, ProtectLightConfig, ProtectLightConfigPayload } from 'unifi-protect';
+import { PROTECT_HOMEKIT_UPDATE_DELAY } from '../settings.js';
 import { ProtectDevice } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';
 import { ProtectReservedNames } from '../protect-types.js';
+
+// Protect LED level range is 1-6, HomeKit uses 0-100%. Each level step equals 20%.
+const LED_LEVEL_STEP = 20;
+
+// Convert a Protect LED level (1-6) to a HomeKit brightness percentage (0-100).
+function ledToPercent(ledLevel: number): number {
+
+  return (ledLevel - 1) * LED_LEVEL_STEP;
+}
+
+// Convert a HomeKit brightness percentage (0-100) to a Protect LED level (1-6).
+function percentToLed(percent: number): number {
+
+  return Math.round(percent / LED_LEVEL_STEP) + 1;
+}
 
 export class ProtectLight extends ProtectDevice {
 
@@ -102,12 +118,12 @@ export class ProtectLight extends ProtectDevice {
     service.getCharacteristic(this.hap.Characteristic.Brightness).onGet(() => {
 
       // The Protect ledLevel settings goes from 1 - 6. HomeKit expects percentages, so we convert it like so.
-      return (this.ufp.lightDeviceSettings.ledLevel - 1) * 20;
+      return ledToPercent(this.ufp.lightDeviceSettings.ledLevel);
     });
 
     service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(async (value: CharacteristicValue) => {
 
-      const brightness = Math.round(((value as number) / 20) + 1);
+      const brightness = percentToLed(value as number);
       const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { lightDeviceSettings: { ledLevel: brightness } });
 
       if(!newDevice) {
@@ -121,15 +137,15 @@ export class ProtectLight extends ProtectDevice {
       this.ufp = newDevice;
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
-      setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, (brightness - 1) * 20), 50);
+      setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, ledToPercent(brightness)), PROTECT_HOMEKIT_UPDATE_DELAY);
 
       // Publish our state.
-      this.publish('light/brightness', ((brightness - 1) * 20).toString());
+      this.publish('light/brightness', ledToPercent(brightness).toString());
     });
 
     // Initialize the light.
     service.updateCharacteristic(this.hap.Characteristic.On, this.ufp.isLightOn);
-    service.updateCharacteristic(this.hap.Characteristic.Brightness, (this.ufp.lightDeviceSettings.ledLevel - 1) * 20);
+    service.updateCharacteristic(this.hap.Characteristic.Brightness, ledToPercent(this.ufp.lightDeviceSettings.ledLevel));
 
     return true;
   }
@@ -145,7 +161,7 @@ export class ProtectLight extends ProtectDevice {
 
     this.subscribeGet('light/brightness', 'light brightness', () => {
 
-      return ((this.ufp.lightDeviceSettings.ledLevel - 1) * 20).toString();
+      return ledToPercent(this.ufp.lightDeviceSettings.ledLevel).toString();
     });
 
     // Control the light.
@@ -195,7 +211,7 @@ export class ProtectLight extends ProtectDevice {
 
         // Update our brightness.
         this.accessory.getService(this.hap.Service.Lightbulb)?.
-          updateCharacteristic(this.hap.Characteristic.Brightness, ((payload.lightDeviceSettings.ledLevel as number) - 1) * 20);
+          updateCharacteristic(this.hap.Characteristic.Brightness, ledToPercent(payload.lightDeviceSettings.ledLevel as number));
       }
 
       if('isIndicatorEnabled' in payload.lightDeviceSettings) {

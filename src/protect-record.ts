@@ -12,7 +12,7 @@ import type { ProtectCamera, RtspEntry } from './devices/index.js';
 import { HDSProtocolSpecificErrorReason } from 'homebridge';
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from './settings.js';
 import { ProtectTimeshiftBuffer } from './protect-timeshift.js';
-import { createSegmentQueueProcessor } from './protect-utils.js';
+import { createSegmentQueueProcessor, formatRecordingDuration } from './protect-utils.js';
 
 // Camera recording delegate implementation for Protect.
 export class ProtectRecordingDelegate implements CameraRecordingDelegate {
@@ -398,77 +398,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     if(!this.accessory.context.hksvRecordingDisabled && this.timeshiftedSegments && this.transmittedSegments && this.rtspEntry) {
 
       // Calculate approximately how many seconds we've recorded. We have more accuracy in timeshifted segments, so we'll use the more accurate statistics when
-      // we can.
-      // Otherwise, we use the number of segments transmitted to HomeKit as a close proxy.
+      // we can. Otherwise, we use the number of segments transmitted to HomeKit as a close proxy.
       const recordedSeconds = (this.timeshiftedSegments * this.timeshift.segmentLength) / 1000;
-
-      let recordedTime = '';
-
-      // Calculate the time elements.
-      const hours = Math.floor(recordedSeconds / 3600);
-      const minutes = Math.floor((recordedSeconds % 3600) / 60);
-      const seconds = Math.floor((recordedSeconds % 3600) % 60);
-
-      // Create a nicely formatted string for end users. Yes, the author recognizes this isn't essential, but it does bring a smile to their face.
-      if(recordedSeconds < 1) {
-
-        recordedTime = recordedSeconds.toString();
-      } else if(recordedSeconds < 60) {
-
-        recordedTime = Math.round(recordedSeconds).toString();
-      } else {
-
-        // Build the string.
-        if(hours > 9) {
-
-          recordedTime = hours.toString() + ':';
-        } else if(hours > 0) {
-
-          recordedTime = '0' + hours.toString() + ':';
-        }
-
-        if(minutes > 9) {
-
-          recordedTime += minutes.toString() + ':';
-        } else if(minutes > 0) {
-
-          recordedTime += ((hours > 0) ? '0' : '') + minutes.toString() + ':';
-        } else if(hours > 0) {
-
-          recordedTime += '00:';
-        }
-
-        if(recordedTime.length && (seconds < 10)) {
-
-          recordedTime += '0' + seconds.toString();
-        } else {
-
-          recordedTime += seconds ? seconds.toString() : recordedSeconds.toString();
-        }
-      }
-
-      let timeUnit;
-
-      switch(recordedTime.split(':').length - 1) {
-
-        case 1:
-
-          timeUnit = 'minute';
-
-          break;
-
-        case 2:
-
-          timeUnit = 'hour';
-
-          break;
-
-        default:
-
-          timeUnit = 'second';
-
-          break;
-      }
+      const { time: recordedTime, unit: timeUnit } = formatRecordingDuration(recordedSeconds);
 
       // Inform the user if they've enabled logging.
       if((reason === HDSProtocolSpecificErrorReason.NORMAL) && this.protectCamera.hints.logHksv) {
@@ -516,9 +448,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   // Return whether the user has audio enabled or disabled for recordings.
   public get isAudioActive(): boolean {
 
-    return (this.protectCamera.ufp.featureFlags.hasMic && this.protectCamera.hasFeature('Audio') &&
-      (this.protectCamera.stream?.controller.recordingManagement?.recordingManagementService
-        .getCharacteristic(this.api.hap.Characteristic.RecordingAudioActive).value === 1)) ? true : false;
+    return this.protectCamera.ufp.featureFlags.hasMic && this.protectCamera.hasFeature('Audio') &&
+      this.protectCamera.stream?.controller.recordingManagement?.recordingManagementService
+        .getCharacteristic(this.api.hap.Characteristic.RecordingAudioActive).value === 1;
   }
 
   // Return our HomeKit Secure Video recording state. This effectively tells us if HKSV has been configured and is on.

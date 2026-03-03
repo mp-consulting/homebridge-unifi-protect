@@ -37,6 +37,12 @@ import {
   PROTECT_TRANSCODE_BITRATE,
   PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE,
   PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO,
+  PROTECT_AMBIENT_LIGHT_POLL_INTERVAL,
+  PROTECT_HOMEKIT_UPDATE_DELAY,
+  HOMEKIT_AMBIENT_LIGHT_MINIMUM,
+  PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL,
+  PROTECT_MQTT_TOPIC,
+  PROTECT_PLAYLIST_LOGO_URL,
 } from '../src/settings.js';
 
 describe('settings', () => {
@@ -87,6 +93,10 @@ describe('settings', () => {
       PROTECT_SNAPSHOT_TIMEOUT,
       PROTECT_TRANSCODE_BITRATE,
       PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE,
+      PROTECT_AMBIENT_LIGHT_POLL_INTERVAL,
+      PROTECT_HOMEKIT_UPDATE_DELAY,
+      HOMEKIT_AMBIENT_LIGHT_MINIMUM,
+      PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL,
     };
 
     it.each(Object.entries(durationConstants))('%s is a positive number', (_name, value) => {
@@ -166,6 +176,42 @@ describe('settings', () => {
 
       // 4K (3840x2160 = 8,294,400) should fit exactly.
       expect(3840 * 2160).toBeLessThanOrEqual(maxPixels);
+    });
+  });
+
+  describe('ambient light sensor constants', () => {
+
+    it('PROTECT_AMBIENT_LIGHT_POLL_INTERVAL is at least 10 seconds', () => {
+
+      expect(PROTECT_AMBIENT_LIGHT_POLL_INTERVAL).toBeGreaterThanOrEqual(10000);
+    });
+
+    it('HOMEKIT_AMBIENT_LIGHT_MINIMUM is 0.0001 (HomeKit lux floor)', () => {
+
+      expect(HOMEKIT_AMBIENT_LIGHT_MINIMUM).toBe(0.0001);
+    });
+  });
+
+  describe('HomeKit update delay', () => {
+
+    it('PROTECT_HOMEKIT_UPDATE_DELAY is a small positive value', () => {
+
+      expect(PROTECT_HOMEKIT_UPDATE_DELAY).toBeGreaterThan(0);
+      expect(PROTECT_HOMEKIT_UPDATE_DELAY).toBeLessThanOrEqual(1000);
+    });
+  });
+
+  describe('string constants', () => {
+
+    it('PROTECT_MQTT_TOPIC is a non-empty string', () => {
+
+      expect(typeof PROTECT_MQTT_TOPIC).toBe('string');
+      expect(PROTECT_MQTT_TOPIC.length).toBeGreaterThan(0);
+    });
+
+    it('PROTECT_PLAYLIST_LOGO_URL is a valid URL', () => {
+
+      expect(PROTECT_PLAYLIST_LOGO_URL).toMatch(/^https?:\/\//);
     });
   });
 });

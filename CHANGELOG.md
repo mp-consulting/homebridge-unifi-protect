@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 1.0.2 (2026-03-02)
+  * Refactor: decompose the 1700-line `ProtectCamera` god class into three focused delegate classes — `ProtectCameraVideo` (RTSP/video stream management), `ProtectCameraSensors` (smart detection, tamper, ambient light), and `ProtectCameraControls` (night vision, NVR recording, access lock, camera details) — reducing the main class to ~715 lines while preserving the full public API.
+  * Fix: resolve timer leak where `ambientLightTimer` and `accessUnlockTimer` were not cleared on device removal, causing stale callbacks after camera deletion.
+  * Fix: replace unsafe `duration !== duration` NaN check with `Number.isFinite()` in doorbell MQTT message validation.
+  * Improvement: extract magic numbers into named constants — `PROTECT_HOMEKIT_UPDATE_DELAY` (replaces 12 bare `setTimeout(..., 50)` calls across 6 files), `PROTECT_AMBIENT_LIGHT_POLL_INTERVAL` (replaces inline `60 * 1000`), and `HOMEKIT_AMBIENT_LIGHT_MINIMUM` (replaces inline `0.0001`).
+  * Test: add 119 new tests across 5 new test files covering audio filter pipeline, night vision dimmer logic, resolution generation, sensor algorithms, and doorbell duration validation. Total: 254 → 373 tests.
+
 ## 1.0.1 (2026-03-02)
   * Fix: stop hardcoding 4K (3840x2160) as the source stream when hardware transcoding is enabled. The previous behavior overwhelmed the hardware transcoder on high-resolution cameras (e.g. G6 Bullet) when HomeKit requested 720p, causing frozen/still video frames. The stream selection now uses `biasHigher` to pick the next available resolution above the request (e.g. 1080p Medium) instead of always targeting the maximum.
   * Improvement: add a maximum downscale ratio (`PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO = 2`) that caps the source stream resolution relative to the HomeKit request. For example, a 720p request allows up to ~1440p input but rejects 4K (3x downscale). A 1080p request still allows 4K (2x). This adapts naturally to any camera and request combination without platform-specific configuration.

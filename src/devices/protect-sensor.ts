@@ -4,6 +4,7 @@
  */
 import type { DeepIndexable, ProtectEventPacket, ProtectSensorConfig, ProtectSensorConfigPayload } from 'unifi-protect';
 import type { PlatformAccessory, Service } from 'homebridge';
+import { HOMEKIT_AMBIENT_LIGHT_MINIMUM } from '../settings.js';
 import { ProtectDevice } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';
 import { ProtectReservedNames } from '../protect-types.js';
@@ -227,12 +228,11 @@ export class ProtectSensor extends ProtectDevice {
     // Retrieve the current light level when requested.
     service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel).onGet(() => {
 
-      // The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
-      return this.ambientLight >= 0.0001 ? this.ambientLight : 0.0001;
+      return Math.max(this.ambientLight, HOMEKIT_AMBIENT_LIGHT_MINIMUM);
     });
 
-    // Update the sensor. The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
-    service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.ambientLight >= 0.0001 ? this.ambientLight : 0.0001);
+    // Update the sensor.
+    service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, Math.max(this.ambientLight, HOMEKIT_AMBIENT_LIGHT_MINIMUM));
 
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
@@ -451,18 +451,20 @@ export class ProtectSensor extends ProtectDevice {
   // Get the current alarm alert detection information.
   private get alarmDetected(): boolean {
 
-    // Return true if we are not null, meaning the alarm has sounded.
-    const value = this.ufp.alarmTriggeredAt !== null;
+    return this.ufp.alarmTriggeredAt !== null;
+  }
 
-    // Save the state change and publish to MQTT.
+  // Track alarm state changes and log transitions.
+  private updateAlarmState(): void {
+
+    const value = this.alarmDetected;
+
     if(value !== this.lastAlarm) {
 
       this.lastAlarm = value;
 
       this.log.info('Alarm %sdetected.', value ? '' : 'no longer ');
     }
-
-    return value;
   }
 
   // Get the current ambient light information.
@@ -536,6 +538,9 @@ export class ProtectSensor extends ProtectDevice {
 
       this.nvr.events.motionEventHandler(this);
     }
+
+    // Track alarm state transitions.
+    this.updateAlarmState();
 
     // Process it.
     this.updateDevice();

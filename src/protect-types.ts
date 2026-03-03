@@ -19,7 +19,8 @@ export type ProtectDeviceTypes = {
   viewer: ProtectViewer;
 };
 
-export const ProtectDeviceCategories = [ 'camera', 'chime', 'light', 'sensor', 'viewer' ];
+export const ProtectDeviceCategories = [ 'camera', 'chime', 'light', 'sensor', 'viewer' ] as const;
+export type ProtectDeviceCategory = typeof ProtectDeviceCategories[number];
 export type ProtectDeviceConfigTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectLightConfig | ProtectSensorConfig | ProtectViewerConfig;
 export type ProtectDevices = ProtectCamera | ProtectChime | ProtectDoorbell | ProtectLight | ProtectSensor | ProtectViewer;
 

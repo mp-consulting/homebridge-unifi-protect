@@ -15,7 +15,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
   public accessories: PlatformAccessory[];
   public readonly api: API;
-  public readonly codecSupport!: FfmpegCodecs;
+  public readonly codecSupport: FfmpegCodecs;
   public readonly config: ProtectOptions;
   private readonly controllers: ProtectNvr[];
   public readonly featureOptions: FeatureOptions;
@@ -43,6 +43,9 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       verboseFfmpeg: config?.verboseFfmpeg === true,
       videoProcessor: config?.videoProcessor ?? ffmpegPath ?? 'ffmpeg',
     };
+
+    // Probe our FFmpeg capabilities. We always initialize this to ensure consistent state.
+    this.codecSupport = new FfmpegCodecs({ ffmpegExec: this.config.videoProcessor, log: this.log, verbose: this.verboseFfmpeg });
 
     // We need a UniFi Protect controller configured to do anything.
     if(!this.config.controllers.length) {
@@ -86,9 +89,6 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
       this.controllers.push(new ProtectNvr(this, controllerConfig));
     }
-
-    // Probe our FFmpeg capabilities.
-    this.codecSupport = new FfmpegCodecs({ ffmpegExec: this.config.videoProcessor, log: this.log, verbose: this.verboseFfmpeg });
 
     // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done loading
     // all the cached accessories it knows about, and calling configureAccessory() on each.

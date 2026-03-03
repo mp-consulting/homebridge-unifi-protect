@@ -4,20 +4,12 @@
  */
 import type { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from 'homebridge';
 import { type HomebridgePluginLogging, type Nullable, acquireService, sanitizeName, validService } from 'homebridge-plugin-utils';
-import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION } from '../settings.js';
+import { PROTECT_HOMEKIT_UPDATE_DELAY, PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION } from '../settings.js';
 import type { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from 'unifi-protect';
 import { type ProtectDeviceConfigTypes, ProtectReservedNames } from '../protect-types.js';
 import type { ProtectNvr } from '../protect-nvr.js';
 import type { ProtectPlatform } from '../protect-platform.js';
 import util from 'node:util';
-
-/*
-// List the optional methods of our subclasses that we want to expose commonly.
-export interface ProtectDevice {
-
-  eventHandler?(): void;
-}
-/* */
 
 // Device-specific options and settings.
 export interface ProtectHints {
@@ -41,6 +33,8 @@ export interface ProtectHints {
   logMotion: boolean;
   motionDuration: number;
   nightVision: boolean;
+  nightVisionDimmer: boolean;
+  nvrRecordingSwitch: boolean;
   occupancyDuration: number;
   probesize: number;
   recordingDefault: string;
@@ -48,6 +42,7 @@ export interface ProtectHints {
   smartDetectSensors: boolean;
   smartOccupancy: string[];
   standalone: boolean;
+  statusLedSwitch: boolean;
   streamingDefault: string;
   syncName: boolean;
   transcode: boolean;
@@ -160,6 +155,8 @@ export abstract class ProtectDevice extends ProtectBase {
       logMotion: false,
       motionDuration: PROTECT_MOTION_DURATION,
       nightVision: false,
+      nightVisionDimmer: false,
+      nvrRecordingSwitch: false,
       occupancyDuration: PROTECT_OCCUPANCY_DURATION,
       probesize: 0,
       recordingDefault: '',
@@ -167,6 +164,7 @@ export abstract class ProtectDevice extends ProtectBase {
       smartDetectSensors: false,
       smartOccupancy: [],
       standalone: false,
+      statusLedSwitch: false,
       streamingDefault: '',
       syncName: false,
       transcode: false,
@@ -426,7 +424,7 @@ export abstract class ProtectDevice extends ProtectBase {
         // Check to see if motion events are disabled.
         if(switchService && !switchService.getCharacteristic(this.hap.Characteristic.On).value) {
 
-          setTimeout(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, false), 50);
+          setTimeout(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, false), PROTECT_HOMEKIT_UPDATE_DELAY);
 
         } else {
 
@@ -443,7 +441,7 @@ export abstract class ProtectDevice extends ProtectBase {
       // If the motion sensor is still on, we should be as well.
       if(motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value) {
 
-        setTimeout(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, true), 50);
+        setTimeout(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, true), PROTECT_HOMEKIT_UPDATE_DELAY);
       }
     });
 
@@ -633,10 +631,12 @@ export abstract class ProtectDevice extends ProtectBase {
     this.nvr.logFeature(option, nvrMessage);
   }
 
+  private static readonly RESERVED_NAMES_UPPER = new Set(Object.values(ProtectReservedNames).map(x => x.toUpperCase()));
+
   // Utility function for reserved identifiers for switches.
   public isReservedName(name?: string): boolean {
 
-    return name ? Object.values(ProtectReservedNames).map(x => x.toUpperCase()).includes(name.toUpperCase()) : false;
+    return name ? ProtectDevice.RESERVED_NAMES_UPPER.has(name.toUpperCase()) : false;
   }
 
   // Utility function to determine whether or not a device is currently online.

@@ -69,6 +69,9 @@ export const PROTECT_LIVESTREAM_RESTART_INTERVAL = 10;
 // Default timeout, in milliseconds, before considering a livestream API session as stale and triggering a restart.
 export const PROTECT_LIVESTREAM_TIMEOUT = 3500;
 
+// Default retry interval, in milliseconds, for the livestream API when the controller is offline or throttled.
+export const PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL = 60000;
+
 // Protect fMP4 segment resolution, in milliseconds. This defines the resolution of our buffer. It should never be less than 100ms or greater than 1500ms.
 export const PROTECT_SEGMENT_RESOLUTION = 100;
 
@@ -110,3 +113,17 @@ export const PROTECT_TRANSCODE_BITRATE = 2000;
 
 // Bitrate, in kilobits per second, to use when transcoding to high-latency clients.
 export const PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE = 1000;
+
+// Polling interval, in milliseconds, for ambient light sensor updates.
+export const PROTECT_AMBIENT_LIGHT_POLL_INTERVAL = 60000;
+
+// Delay, in milliseconds, for deferred HomeKit characteristic updates. This brief delay ensures characteristic changes propagate correctly to HomeKit
+// controllers when responding to user-initiated set operations.
+export const PROTECT_HOMEKIT_UPDATE_DELAY = 50;
+
+// Minimum ambient light level that HomeKit will accept, in lux.
+export const HOMEKIT_AMBIENT_LIGHT_MINIMUM = 0.0001;
+
+// Plugin logo URL for M3U playlist guide information.
+export const PROTECT_PLAYLIST_LOGO_URL =
+  'https://raw.githubusercontent.com/mp-consulting/homebridge-unifi-protect/main/docs/media/homebridge-unifi-protect-4x3.png';

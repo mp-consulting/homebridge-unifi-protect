@@ -5,7 +5,7 @@
 import type { CharacteristicValue, PlatformAccessory } from 'homebridge';
 import { ProtectReservedNames } from '../protect-types.js';
 import { toCamelCase } from '../protect-utils.js';
-import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION } from '../settings.js';
+import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION, PROTECT_HOMEKIT_UPDATE_DELAY } from '../settings.js';
 import type { ProtectChimeConfig } from 'unifi-protect';
 import { ProtectDevice } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';
@@ -104,7 +104,7 @@ export class ProtectChime extends ProtectDevice {
       // really be a meaningless state given you can't undo the play command to the chime.
       if(!value) {
 
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.eventTimers.has(endpoint)), 50);
+        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.eventTimers.has(endpoint)), PROTECT_HOMEKIT_UPDATE_DELAY);
 
         return;
       }
@@ -122,7 +122,7 @@ export class ProtectChime extends ProtectDevice {
 
         this.log.error('Unable to play ' + name + '.');
 
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.eventTimers.has(endpoint)), 50);
+        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.eventTimers.has(endpoint)), PROTECT_HOMEKIT_UPDATE_DELAY);
       }
 
       this.eventTimers.set(endpoint, setTimeout(() => {

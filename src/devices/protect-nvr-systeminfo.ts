@@ -112,7 +112,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
   private eventHandler(packet: ProtectEventPacket): void {
 
     // Filter out payloads we aren't interested in. We only want NVR system information updates.
-    if('systemInfo' in (packet.payload as JSON)) {
+    if('systemInfo' in (packet.payload as Record<string, unknown>)) {
 
       // Process it.
       this.updateDevice(false);

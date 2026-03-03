@@ -12,6 +12,7 @@ import { EventEmitter } from 'node:events';
 import { PROTECT_DOORBELL_TRIGGER_DURATION } from './settings.js';
 import type { ProtectNvr } from './protect-nvr.js';
 import type { ProtectPlatform } from './protect-platform.js';
+import { mergeJson } from './protect-utils.js';
 
 export class ProtectEvents extends EventEmitter {
 
@@ -51,49 +52,22 @@ export class ProtectEvents extends EventEmitter {
     this.configureEvents();
   }
 
-  // Merge Protect JSON update payloads into the Protect configuration JSON for a device while dealing with deep objects. Protect has specific quirks in how
-  // it deals with object merges and we've accounted for those in this deep merge / deep patch utility.
-  //
-  // Thanks to https://stackoverflow.com/a/48218209 for the foundation for this one in thinking about how to do deep object merges in JavaScript.
+  // Merge Protect JSON update payloads into the Protect configuration JSON for a device while dealing with deep objects.
   private updateUfp<DeviceType extends ProtectKnownDeviceTypes>(ufp: DeviceType, payload: unknown): DeviceType {
 
-    const mergeJson = (...objects: Record<string, unknown>[]): Record<string, unknown> => {
-
-      const result = {} as Record<string, unknown>;
-
-      // Utility to validate if a value is an object, excluding arrays.
-      const isObject = (value: unknown): value is Record<string, unknown> => (typeof value === 'object') && !Array.isArray(value) && (value !== null);
-
-      // Process each object in the input array
-      for(const object of objects) {
-
-        // Iterate through the keys that belong to this object while explicitly filter out any keys that are inherited. This could ostensibly be done using
-        // reduce, but we take a more performance-conscious view of things here given that this code will be called quite frequently due to the number of
-        // Protect events we typically process.
-        for(const key of Object.keys(object).filter(key => Object.hasOwn(object, key))) {
-
-          // Initialize.
-          const existingValue = result[key];
-          const newValue = object[key];
-
-          // Check if both the existing value and the new value are non-array, non-null, objects, in which case we recurse to do a deep merge of the objects.
-          if(isObject(existingValue) && isObject(newValue)) {
-
-            result[key] = mergeJson(existingValue, newValue);
-
-            continue;
-          }
-
-          // Otherwise, let's directly assign the new value.
-          result[key] = newValue;
-        }
-      }
-
-      // We're done.
-      return result;
-    };
-
     return mergeJson(ufp as unknown as Record<string, unknown>, payload as Record<string, unknown>) as DeviceType;
+  }
+
+  // Manage event timers - clears any existing timer for the key, sets a new one, and auto-deletes on expiry.
+  private resetTimer(key: string, callback: () => void, duration: number): void {
+
+    clearTimeout(this.eventTimers.get(key));
+
+    this.eventTimers.set(key, setTimeout(() => {
+
+      callback();
+      this.eventTimers.delete(key);
+    }, duration));
   }
 
   // Process Protect API update events.
@@ -130,7 +104,7 @@ export class ProtectEvents extends EventEmitter {
 
           // If we have services on the accessory associated with the Protect device that have a StatusActive characteristic set, update our availability state.
           protectDevice.accessory.services.filter(x => x.testCharacteristic(this.hap.Characteristic.StatusActive))
-            .map(x => x.updateCharacteristic(this.hap.Characteristic.StatusActive, protectDevice?.isOnline ?? true));
+            .forEach(x => x.updateCharacteristic(this.hap.Characteristic.StatusActive, protectDevice?.isOnline ?? true));
         }
 
         // If this is a bootstrap-related update, we're done here. Anything beyond this point is intended for dynamic event updates.
@@ -348,14 +322,10 @@ export class ProtectEvents extends EventEmitter {
 
         protectDevice.log.info('Motion detected.');
       }
-    } else {
-
-      // Clear out the inflight motion event timer.
-      clearTimeout(this.eventTimers.get(protectDevice.id));
     }
 
     // Reset our motion event after motionDuration.
-    this.eventTimers.set(protectDevice.id, setTimeout(() => {
+    this.resetTimer(protectDevice.id, () => {
 
       motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
 
@@ -367,10 +337,7 @@ export class ProtectEvents extends EventEmitter {
 
       // Publish to MQTT, if the user has configured it.
       this.nvr.mqtt?.publish(protectDevice.ufp.mac, 'motion', 'false');
-
-      // Delete the timer from our motion event tracker.
-      this.eventTimers.delete(protectDevice.id);
-    }, protectDevice.hints.motionDuration * 1000));
+    }, protectDevice.hints.motionDuration * 1000);
   }
 
   // Smart object detection sensors and MQTT publishing.
@@ -382,7 +349,7 @@ export class ProtectEvents extends EventEmitter {
 
       const key = protectDevice.id + '.Motion.SmartDetect.ObjectSensors.' + event.type;
 
-      // We hae a new event, let's make sure we trigger our sensors only once.
+      // We have a new event, let's make sure we trigger our sensors only once.
       if(!this.eventTimers.has(key)) {
 
         // These sensors only get triggered if they actually exist on the accessory.
@@ -397,14 +364,10 @@ export class ProtectEvents extends EventEmitter {
 
           protectDevice.log.info('Smart motion detected: %s.', event.type);
         }
-      } else {
-
-        // Clear out the inflight motion event timer.
-        clearTimeout(this.eventTimers.get(key));
       }
 
       // Reset our smart detection contact sensors after motionDuration.
-      this.eventTimers.set(key, setTimeout(() => {
+      this.resetTimer(key, () => {
 
         // Reset our smart detection contact sensor.
         protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + '.' + event.type)?.
@@ -413,10 +376,7 @@ export class ProtectEvents extends EventEmitter {
         // Publish the smart detection event to MQTT, if the user has configured it.
         this.nvr.mqtt?.publish(protectDevice.ufp.mac, 'motion/smart/' + event.type, 'false');
         protectDevice.log.debug('Resetting smart object motion event.');
-
-        // Delete the timer from our motion event tracker.
-        this.eventTimers.delete(key);
-      }, protectDevice.hints.motionDuration * 1000));
+      }, protectDevice.hints.motionDuration * 1000);
 
       // Vehicles have additional attributes that can be associated with their smart detections. We process those here.
       if(event.type === 'vehicle') {
@@ -442,21 +402,15 @@ export class ProtectEvents extends EventEmitter {
         protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
           ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + '.' + plate)?.
           updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
-      } else {
-
-        clearTimeout(this.eventTimers.get(plateKey));
       }
 
       // Reset our license plate smart detection contact sensor after motionDuration.
-      this.eventTimers.set(plateKey, setTimeout(() => {
+      this.resetTimer(plateKey, () => {
 
         protectDevice.accessory.getServiceById(this.hap.Service.ContactSensor,
           ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + '.' + plate)?.
           updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
-
-        // Delete the timer from our motion event tracker.
-        this.eventTimers.delete(plateKey);
-      }, protectDevice.hints.motionDuration * 1000));
+      }, protectDevice.hints.motionDuration * 1000);
     }
 
     // Publish event metadata when we see it. Currently, Protect publishes additional telemetry for vehicle types.
@@ -509,11 +463,7 @@ export class ProtectEvents extends EventEmitter {
 
       if(occupancyService) {
 
-        // Kill any inflight reset timer.
-        if(this.eventTimers.has(protectDevice.id + '.Motion.OccupancySensor')) {
-
-          clearTimeout(this.eventTimers.get(protectDevice.id + '.Motion.OccupancySensor'));
-        }
+        const occupancyKey = protectDevice.id + '.Motion.OccupancySensor';
 
         // If the occupancy sensor isn't already triggered, let's do so now.
         if(occupancyService.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value !== true) {
@@ -533,7 +483,7 @@ export class ProtectEvents extends EventEmitter {
         }
 
         // Reset our occupancy state after occupancyDuration.
-        this.eventTimers.set(protectDevice.id + '.Motion.OccupancySensor', setTimeout(() => {
+        this.resetTimer(occupancyKey, () => {
 
           // Reset the occupancy sensor.
           occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
@@ -546,10 +496,7 @@ export class ProtectEvents extends EventEmitter {
 
             protectDevice.log.info('Occupancy no longer detected.');
           }
-
-          // Delete the timer from our motion event tracker.
-          this.eventTimers.delete(protectDevice.id + '.Motion.OccupancySensor');
-        }, protectDevice.hints.occupancyDuration * 1000));
+        }, protectDevice.hints.occupancyDuration * 1000);
       }
     }
   }
@@ -588,13 +535,6 @@ export class ProtectEvents extends EventEmitter {
 
     if(triggerService) {
 
-      // Kill any inflight trigger reset.
-      if(this.eventTimers.has(protectDevice.id + '.Doorbell.Ring.Trigger')) {
-
-        clearTimeout(this.eventTimers.get(protectDevice.id + '.Doorbell.Ring.Trigger'));
-        this.eventTimers.delete(protectDevice.id + '.Doorbell.Ring.Trigger');
-      }
-
       // Flag that we're ringing.
       protectDevice.isRinging = true;
 
@@ -602,16 +542,13 @@ export class ProtectEvents extends EventEmitter {
       triggerService.updateCharacteristic(this.hap.Characteristic.On, true);
 
       // Reset our doorbell trigger.
-      this.eventTimers.set(protectDevice.id + '.Doorbell.Ring.Trigger', setTimeout(() => {
+      this.resetTimer(protectDevice.id + '.Doorbell.Ring.Trigger', () => {
 
         protectDevice.isRinging = false;
 
         triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
         this.log.debug('Resetting doorbell ring trigger.');
-
-        // Delete the timer from our motion event tracker.
-        this.eventTimers.delete(protectDevice.id + '.Doorbell.Ring.Trigger');
-      }, PROTECT_DOORBELL_TRIGGER_DURATION));
+      }, PROTECT_DOORBELL_TRIGGER_DURATION);
     }
 
     // Publish to MQTT, if the user has configured it.
@@ -622,21 +559,11 @@ export class ProtectEvents extends EventEmitter {
       protectDevice.log.info('Doorbell ring detected.');
     }
 
-    // Kill any inflight MQTT reset.
-    if(this.eventTimers.has(protectDevice.id + '.Doorbell.Ring.MQTT')) {
-
-      clearTimeout(this.eventTimers.get(protectDevice.id + '.Doorbell.Ring.MQTT'));
-      this.eventTimers.delete(protectDevice.id + '.Doorbell.Ring.MQTT');
-    }
-
-    // Fire off our MQTT doorbell ring event.
-    this.eventTimers.set(protectDevice.id + '.Doorbell.Ring.MQTT', setTimeout(() => {
+    // Fire off our MQTT doorbell ring event reset.
+    this.resetTimer(protectDevice.id + '.Doorbell.Ring.MQTT', () => {
 
       this.nvr.mqtt?.publish(protectDevice.ufp.mac, 'doorbell', 'false');
-
-      // Delete the timer from our event tracker.
-      this.eventTimers.delete(protectDevice.id + '.Doorbell.Ring.MQTT');
-    }, PROTECT_DOORBELL_TRIGGER_DURATION));
+    }, PROTECT_DOORBELL_TRIGGER_DURATION);
 
     // If we don't have a ring duration defined, we're done.
     if(!this.nvr.platform.config.ringDelay) {
@@ -645,10 +572,6 @@ export class ProtectEvents extends EventEmitter {
     }
 
     // Reset our ring threshold.
-    this.eventTimers.set(protectDevice.id + '.Doorbell.Ring', setTimeout(() => {
-
-      // Delete the timer from our event tracker.
-      this.eventTimers.delete(protectDevice.id + '.Doorbell.Ring');
-    }, this.nvr.platform.config.ringDelay * 1000));
+    this.resetTimer(protectDevice.id + '.Doorbell.Ring', () => {}, this.nvr.platform.config.ringDelay * 1000);
   }
 }

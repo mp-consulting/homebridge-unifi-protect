@@ -4,7 +4,7 @@
  */
 import type { HomebridgePluginLogging } from 'homebridge-plugin-utils';
 import type { ProtectApi } from 'unifi-protect';
-import { PROTECT_M3U_PLAYLIST_PORT } from './settings.js';
+import { PROTECT_M3U_PLAYLIST_PORT, PROTECT_PLAYLIST_LOGO_URL } from './settings.js';
 import http from 'node:http';
 import util from 'node:util';
 
@@ -42,37 +42,20 @@ export class ProtectPlaylistServer {
 
         // Find the RTSP aliases and publish them. We filter out any cameras that don't have RTSP aliases since they would be inaccessible in this context.
         for(const camera of this.ufpApi.bootstrap.cameras
-          .filter(x => (x.videoCodec !== 'av1') && x.channels.some(channel => channel.isRtspEnabled)).sort((a, b) => {
-
-            if(!a.name || !b.name) {
-
-              return 0;
-            }
-
-            if(a.name < b.name) {
-
-              return -1;
-            }
-
-            if(a.name > b.name) {
-
-              return 1;
-            }
-
-            return 0;
-          })) {
+          .filter(x => (x.videoCodec !== 'av1') && x.channels.some(channel => channel.isRtspEnabled))
+          .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))) {
 
           // Publish a playlist entry, including guide information that's suitable for apps that support it, such as Channels DVR.
           const publishEntry = (name = camera.name, description = 'camera', rtspAlias = camera.channels[0].rtspAlias): void => {
 
             response.write(util.format('#EXTINF:0 channel-id="%s" tvc-stream-vcodec="h264" tvc-stream-acodec="opus" tvg-logo="%s" ',
-              name, 'https://raw.githubusercontent.com/mp-consulting/homebridge-unifi-protect/main/docs/media/homebridge-unifi-protect-4x3.png'));
+              name, PROTECT_PLAYLIST_LOGO_URL));
 
             response.write(util.format('tvc-guide-title="%s Livestream" tvc-guide-description="UniFi Protect %s %s livestream." ',
               name, camera.marketName, description));
 
             response.write(util.format('tvc-guide-art="%s" tvc-guide-tags="HD, Live, New, UniFi Protect", %s\n',
-              'https://raw.githubusercontent.com/mp-consulting/homebridge-unifi-protect/main/docs/media/homebridge-unifi-protect-4x3.png', name));
+              PROTECT_PLAYLIST_LOGO_URL, name));
 
             // By convention, the first RTSP alias is always the highest quality on UniFi Protect cameras. Grab it and we're done. We might be tempted
             // to use the RTSPS stream here, but many apps only supports RTSP, and we'll opt for maximizing compatibility here.

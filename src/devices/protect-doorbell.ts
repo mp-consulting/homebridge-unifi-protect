@@ -4,7 +4,7 @@
  */
 import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_AUTHSENSOR_DURATION, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_DOORBELL_CHIME_DURATION_MECHANICAL,
-  PROTECT_DOORBELL_MESSAGE_DURATION } from '../settings.js';
+  PROTECT_DOORBELL_MESSAGE_DURATION, PROTECT_HOMEKIT_UPDATE_DELAY } from '../settings.js';
 import type { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectChimeConfigPayload, ProtectEventAdd, ProtectEventPacket,
   ProtectNvrConfigPayload } from 'unifi-protect';
 import { ProtectReservedNames } from '../protect-types.js';
@@ -31,22 +31,15 @@ export interface MessageSwitchInterface extends MessageInterface {
 
 export class ProtectDoorbell extends ProtectCamera {
 
-  private chimeDigitalDuration: number;
+  private chimeDigitalDuration!: number;
   private contactAuthTimer?: NodeJS.Timeout;
-  private defaultMessageDuration: number;
-  private isMessagesEnabled: boolean;
-  private isMessagesFromControllerEnabled: boolean;
+  private defaultMessageDuration!: number;
+  private isMessagesEnabled!: boolean;
+  private isMessagesFromControllerEnabled!: boolean;
 
   constructor(nvr: ProtectNvr, device: ProtectCameraConfig, accessory: PlatformAccessory) {
 
     super(nvr, device, accessory);
-
-     
-    this.chimeDigitalDuration ??= PROTECT_DOORBELL_CHIME_DURATION_DIGITAL;
-    this.defaultMessageDuration ??= PROTECT_DOORBELL_MESSAGE_DURATION;
-    this.isMessagesEnabled ??= false;
-    this.isMessagesFromControllerEnabled ??= false;
-     
   }
 
   // Configure the doorbell for HomeKit.
@@ -287,7 +280,7 @@ export class ProtectDoorbell extends ProtectCamera {
         // three different settings one can choose from. Instead, we do nothing and leave it to the user to choose what state they really want to set.
         if(!value) {
 
-          setTimeout(() => this.updateDevice(), 50);
+          setTimeout(() => this.updateDevice(), PROTECT_HOMEKIT_UPDATE_DELAY);
 
           return;
         }
@@ -488,10 +481,8 @@ export class ProtectDoorbell extends ProtectCamera {
         return;
       }
 
-      // At a minimum, make sure a message was specified. If we have specified duration, make sure it's a number. Our NaN test may seem strange -
-      // that's because NaN is the only JavaScript value that is treated as unequal to itself. Meaning, you can always test if a value is NaN by
-      // checking it for equality to itself. Weird huh?
-      if(!('message' in inboundPayload) || (('duration' in inboundPayload) && (inboundPayload.duration !== inboundPayload.duration))) {
+      // At a minimum, make sure a message was specified. If we have specified duration, make sure it's a valid number.
+      if(!('message' in inboundPayload) || (('duration' in inboundPayload) && !Number.isFinite(inboundPayload.duration))) {
 
         this.log.error('Unable to process MQTT message: "%s".', inboundPayload);
 
