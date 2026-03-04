@@ -252,7 +252,7 @@ export const renderOptions = () => {
       }
     }
 
-    const icon = CATEGORY_ICONS[category.name] || 'fa-cog';
+    const icon = CATEGORY_ICONS[category.name] || 'gear';
     const color = CATEGORY_COLORS[category.name] || '#6c757d';
     const isOpen = state.openCategories.has(category.name) || ((modifiedCount > 0) && !state.openCategories.size) || !!searchTerm;
 
@@ -273,7 +273,7 @@ export const renderOptions = () => {
 
     header.innerHTML = `
       <div class="d-flex align-items-center">
-        <span class="category-icon" style="background-color: ${color}"><i class="fas ${icon}"></i></span>
+        <span class="category-icon" style="background-color: ${color}"><i class="bi bi-${icon}"></i></span>
         <span class="ms-2">${escapeHtml(category.description.replace(/ feature options\.?/i, ''))}</span>
       </div>
       <div class="d-flex align-items-center gap-2">
@@ -282,7 +282,7 @@ export const renderOptions = () => {
           <span class="category-progress"><span class="category-progress-fill" style="width: ${progressPct}%"></span></span>
         </span>
         ${modifiedCount ? `<span class="badge bg-warning text-dark">${modifiedCount}</span>` : ''}
-        <i class="fas fa-chevron-${isOpen ? 'up' : 'down'} toggle-icon"></i>
+        <i class="bi bi-chevron-${isOpen ? 'up' : 'down'} toggle-icon"></i>
       </div>
     `;
 
@@ -316,7 +316,7 @@ export const renderOptions = () => {
       const wasOpen = body.classList.contains('open');
 
       body.classList.toggle('open');
-      header.querySelector('.toggle-icon').className = 'fas fa-chevron-' + (wasOpen ? 'down' : 'up') + ' toggle-icon';
+      header.querySelector('.toggle-icon').className = 'bi bi-chevron-' + (wasOpen ? 'down' : 'up') + ' toggle-icon';
 
       if(wasOpen) {
 
@@ -383,11 +383,11 @@ const createOptionItem = (optionKey, opt, scope, category) => {
   } else if(optState.scope === 'controller') {
 
 
-    scopeIndicator = '<span class="badge bg-success bg-opacity-50 ms-1"><i class="fas fa-arrow-down" style="font-size:0.55rem"></i> controller</span>';
+    scopeIndicator = '<span class="badge bg-success bg-opacity-50 ms-1"><i class="bi bi-arrow-down" style="font-size:0.55rem"></i> controller</span>';
   } else if((optState.scope === 'global') && (scope.type !== 'global')) {
 
 
-    scopeIndicator = '<span class="badge bg-secondary bg-opacity-50 ms-1"><i class="fas fa-arrow-down" style="font-size:0.55rem"></i> global</span>';
+    scopeIndicator = '<span class="badge bg-secondary bg-opacity-50 ms-1"><i class="bi bi-arrow-down" style="font-size:0.55rem"></i> global</span>';
   }
 
   // Display name: use option name or category name for the unnamed device option.
@@ -400,7 +400,7 @@ const createOptionItem = (optionKey, opt, scope, category) => {
 
   const resetButton = optState.explicit ?
     '<button class="btn btn-outline-secondary btn-sm reset-option-btn flex-shrink-0 mt-1" title="Reset to inherited value">' +
-      '<i class="fas fa-undo"></i></button>' :
+      '<i class="bi bi-arrow-counterclockwise"></i></button>' :
     '';
 
   // Value input for options with configurable numeric values.

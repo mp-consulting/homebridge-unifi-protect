@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 1.0.3 (2026-03-04)
+
+  * Improvement: config UI migrated to homebridge-ui-kit design system (Bootstrap 5.3 + Bootstrap Icons, shared kit.css/kit.js, `data-bs-theme="dark"` dark mode).
+  * Chore: standardize `.gitignore` and `.npmignore`.
+
 ## 1.0.2 (2026-03-02)
   * Refactor: decompose the 1700-line `ProtectCamera` god class into three focused delegate classes — `ProtectCameraVideo` (RTSP/video stream management), `ProtectCameraSensors` (smart detection, tamper, ambient light), and `ProtectCameraControls` (night vision, NVR recording, access lock, camera details) — reducing the main class to ~715 lines while preserving the full public API.
   * Fix: resolve timer leak where `ambientLightTimer` and `accessUnlockTimer` were not cleared on device removal, causing stale callbacks after camera deletion.

@@ -1,6 +1,6 @@
 {
   "name": "@mp-consulting/homebridge-unifi-protect",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "displayName": "UniFi Protect",
   "description": "A Homebridge plugin that brings full HomeKit support to the UniFi Protect ecosystem, including HomeKit Secure Video, multi-controller setups, and high-performance streaming.",
   "author": {
@@ -69,7 +69,8 @@
   ],
   "scripts": {
     "prebuild": "npm run clean",
-    "build": "tsc",
+    "copy:ui-kit": "mkdir -p homebridge-ui/public/lib && cp node_modules/@mp-consulting/homebridge-ui-kit/dist/kit.css homebridge-ui/public/lib/ && cp node_modules/@mp-consulting/homebridge-ui-kit/dist/kit.js homebridge-ui/public/lib/",
+    "build": "npm run copy:ui-kit && tsc",
     "clean": "shx rm -rf dist",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run --passWithNoTests",
@@ -90,6 +91,7 @@
     "unifi-protect": "4.27.7"
   },
   "devDependencies": {
+    "@mp-consulting/homebridge-ui-kit": "^1.0.0",
     "@eslint/js": "^9.39.2",
     "@types/node": "^25.0.10",
     "@vitest/coverage-v8": "^4.0.18",

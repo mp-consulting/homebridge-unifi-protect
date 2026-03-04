@@ -2,19 +2,17 @@ export const SCREENS = [ 'discoveryScreen', 'setupScreen', 'controllersScreen', 
 export const PLUGIN_NAME = 'UniFi Protect';
 
 export const CATEGORY_ICONS = {
-
-
-  Audio: 'fa-volume-up',
-  Device: 'fa-microchip',
-  Doorbell: 'fa-bell',
-  Log: 'fa-file-alt',
-  Motion: 'fa-running',
-  Nvr: 'fa-server',
-  SecuritySystem: 'fa-shield-alt',
-  Sensor: 'fa-thermometer-half',
-  'UniFi.Access': 'fa-fingerprint',
-  Video: 'fa-video',
-  'Video.HKSV': 'fa-lock',
+  Audio: 'volume-up',
+  Device: 'cpu',
+  Doorbell: 'bell',
+  Log: 'file-text',
+  Motion: 'person-walking',
+  Nvr: 'server',
+  SecuritySystem: 'shield-lock',
+  Sensor: 'thermometer-half',
+  'UniFi.Access': 'fingerprint',
+  Video: 'camera-video',
+  'Video.HKSV': 'lock',
 };
 
 export const CATEGORY_COLORS = {

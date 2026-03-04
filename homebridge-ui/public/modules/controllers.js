@@ -33,15 +33,17 @@ export const renderControllers = () => {
       <div class="d-flex w-100 justify-content-between align-items-center">
         <div>
           <h6 class="mb-1">
-            <i class="fas fa-server mr-2"></i> ${escapeHtml(ctrl.name || ctrl.address)}
-            <span class="status-badge badge rounded-pill bg-secondary ms-2" style="font-size: 0.65rem;"><i class="fas fa-circle-notch fa-spin"></i></span>
+            <i class="bi bi-server me-2"></i> ${escapeHtml(ctrl.name || ctrl.address)}
+            <span class="status-badge badge rounded-pill bg-secondary ms-2" style="font-size: 0.65rem;">
+              <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+            </span>
           </h6>
-          <small class="text-muted"><i class="fas fa-network-wired mr-1"></i> ${escapeHtml(ctrl.address)}</small>
+          <small class="text-muted"><i class="bi bi-hdd-network me-1"></i> ${escapeHtml(ctrl.address)}</small>
         </div>
         <div class="d-flex gap-1">
-          <button class="btn btn-sm btn-primary feature-options-btn"><i class="fas fa-sliders-h"></i> Options</button>
-          <button class="btn btn-sm btn-secondary edit-ctrl-btn"><i class="fas fa-edit"></i> Edit</button>
-          <button class="btn btn-sm btn-danger delete-ctrl-btn"><i class="fas fa-trash"></i></button>
+          <button class="btn btn-sm btn-primary feature-options-btn"><i class="bi bi-sliders"></i> Options</button>
+          <button class="btn btn-sm btn-secondary edit-ctrl-btn"><i class="bi bi-pencil"></i> Edit</button>
+          <button class="btn btn-sm btn-danger delete-ctrl-btn"><i class="bi bi-trash"></i></button>
         </div>
       </div>
     `;
@@ -70,13 +72,13 @@ export const renderControllers = () => {
       badge.className = 'status-badge badge rounded-pill bg-' + colorClass + ' ms-2';
       badge.style.fontSize = '0.65rem';
       badge.textContent = '';
-      badge.appendChild(el('i', { className: 'fas fa-' + icon }));
+      badge.appendChild(el('i', { className: 'bi bi-' + icon }));
       badge.appendChild(document.createTextNode(' ' + label));
     };
 
     homebridge.request('/checkStatus', { address: ctrl.address }).then((result) => {
 
-      updateBadge(result?.online ? 'success' : 'danger', result?.online ? 'check-circle' : 'times-circle', result?.online ? 'Online' : 'Offline');
+      updateBadge(result?.online ? 'success' : 'danger', result?.online ? 'check-circle' : 'x-circle', result?.online ? 'Online' : 'Offline');
     }).catch(() => {
 
       updateBadge('warning', 'question-circle', 'Unknown');

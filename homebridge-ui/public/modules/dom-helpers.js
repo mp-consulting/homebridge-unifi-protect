@@ -21,7 +21,7 @@ export const setButtonLoading = (btn, loading, loadingText = 'Loading...') => {
     btn.dataset.originalContent = btn.innerHTML;
     btn.disabled = true;
 
-    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${loadingText}`;
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm" aria-hidden="true"></span> ${loadingText}`;
   } else {
 
 

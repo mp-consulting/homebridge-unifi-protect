@@ -52,7 +52,7 @@ export const handleDiscover = async () => {
 
 
     btn.disabled = false;
-    btnText.innerHTML = '<i class="fas fa-search"></i> Discover Controllers';
+    btnText.innerHTML = '<i class="bi bi-search"></i> Discover Controllers';
     spinner.style.display = 'none';
   }
 };
@@ -68,10 +68,10 @@ const createDiscoveredDeviceItem = (device) => {
   li.innerHTML = `
     <div class="d-flex w-100 justify-content-between align-items-center">
       <div>
-        <h6 class="mb-1"><i class="fas fa-server mr-2"></i> ${escapeHtml(device.name)}</h6>
-        <small class="text-muted"><i class="fas fa-network-wired mr-1"></i> ${escapeHtml(device.ip)}</small>
+        <h6 class="mb-1"><i class="bi bi-server me-2"></i> ${escapeHtml(device.name)}</h6>
+        <small class="text-muted"><i class="bi bi-hdd-network me-1"></i> ${escapeHtml(device.ip)}</small>
         ${device.model ? `<span class="badge bg-secondary ms-2">${escapeHtml(device.model)}</span>` : ''}
-        ${device.mac ? `<small class="text-muted ms-2"><i class="fas fa-barcode mr-1"></i> ${escapeHtml(device.mac)}</small>` : ''}
+        ${device.mac ? `<small class="text-muted ms-2"><i class="bi bi-upc me-1"></i> ${escapeHtml(device.mac)}</small>` : ''}
       </div>
       <span class="badge bg-primary rounded-pill">Select</span>
     </div>
