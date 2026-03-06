@@ -2,8 +2,6 @@
 dist/
 
 # Homebridge UI generated libs (copied from node_modules by build-ui)
-homebridge-ui/public/kit.css
-homebridge-ui/public/kit.js
 homebridge-ui/api/
 
 # Dependencies
@@ -50,3 +48,4 @@ tmp/
 # BMad agent files
 _bmad/
 _bmad-output/
+homebridge-ui/public/lib/
