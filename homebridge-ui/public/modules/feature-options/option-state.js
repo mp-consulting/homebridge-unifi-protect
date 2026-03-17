@@ -1,4 +1,8 @@
-/* option-state.js: Pure option state resolution logic (no DOM access). */
+/* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ * Copyright(C) 2026, Mickael Palma / MP Consulting. All rights reserved.
+ *
+ * option-state.js: Pure option state resolution logic (no DOM access).
+ */
 import { getControllers, state } from '../state.js';
 
 const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

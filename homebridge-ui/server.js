@@ -1,4 +1,8 @@
-/* server.js: @mp-consulting/homebridge-unifi-protect webUI server API. */
+/* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ * Copyright(C) 2026, Mickael Palma / MP Consulting. All rights reserved.
+ *
+ * server.js: @mp-consulting/homebridge-unifi-protect webUI server API.
+ */
 'use strict';
 
 import { featureOptionCategories, featureOptions } from '../dist/protect-options.js';

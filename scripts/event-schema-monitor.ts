@@ -1,5 +1,6 @@
 #!/usr/bin/env npx tsx
-/* Copyright(C) 2017-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
+/* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ * Copyright(C) 2026, Mickael Palma / MP Consulting. All rights reserved.
  *
  * event-schema-monitor.ts: Connects to a UniFi Protect controller, listens to live events, and validates each message against known schemas.
  * Reports any schema drift (new fields, missing fields, type changes) that could indicate an API change in a firmware update.

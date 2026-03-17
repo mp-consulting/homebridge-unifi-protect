@@ -1,4 +1,8 @@
-/* scope.js: Scope resolution, cascade diagram, and selector builder. */
+/* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ * Copyright(C) 2026, Mickael Palma / MP Consulting. All rights reserved.
+ *
+ * scope.js: Scope resolution, cascade diagram, and selector builder.
+ */
 import { $ } from '../dom-helpers.js';
 import { state } from '../state.js';
 

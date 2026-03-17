@@ -1,4 +1,8 @@
-/* renderer.js: Feature options rendering and mutation. */
+/* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ * Copyright(C) 2026, Mickael Palma / MP Consulting. All rights reserved.
+ *
+ * renderer.js: Feature options rendering and mutation.
+ */
 import { $, escapeHtml, showScreen } from '../dom-helpers.js';
 import { CATEGORY_COLORS, CATEGORY_ICONS } from '../constants.js';
 import { buildScopeSelector, getCurrentScope, updateCascade } from './scope.js';

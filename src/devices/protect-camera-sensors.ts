@@ -1,4 +1,5 @@
-/* Copyright(C) 2019-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
+/* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ * Copyright(C) 2026, Mickael Palma / MP Consulting. All rights reserved.
  *
  * protect-camera-sensors.ts: Smart detection, tamper, and ambient light sensor delegate for UniFi Protect cameras.
  */

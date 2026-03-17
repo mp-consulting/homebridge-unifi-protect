@@ -1,4 +1,8 @@
-/* @mp-consulting/homebridge-unifi-protect Custom UI. */
+/* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ * Copyright(C) 2026, Mickael Palma / MP Consulting. All rights reserved.
+ *
+ * app.js: @mp-consulting/homebridge-unifi-protect Custom UI.
+ */
 import { $, showScreen } from './modules/dom-helpers.js';
 import { getControllers, state } from './modules/state.js';
 import { handleSetupSubmit, openAddController, renderControllers } from './modules/controllers.js';

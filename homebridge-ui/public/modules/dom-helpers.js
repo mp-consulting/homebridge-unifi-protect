@@ -1,3 +1,8 @@
+/* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ * Copyright(C) 2026, Mickael Palma / MP Consulting. All rights reserved.
+ *
+ * dom-helpers.js: DOM utility functions.
+ */
 import { SCREENS } from './constants.js';
 
 export const $ = (id) => document.getElementById(id);

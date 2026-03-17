@@ -83,7 +83,7 @@ homebridge-ui/                  # Custom config UI with discovery & feature opti
 - Trailing commas in multiline, max line length 160
 - Unix line endings, object curly spacing
 - File naming: `protect-[component].ts`
-- Copyright headers: `Copyright(C) YEAR-2026, Mickael Palma / MP Consulting`
+- Copyright headers: dual-line — `Copyright(C) 2017-2026, HJD` then `Copyright(C) 2026, Mickael Palma / MP Consulting`
 
 ## Git Settings
 

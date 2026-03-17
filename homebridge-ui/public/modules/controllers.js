@@ -1,3 +1,8 @@
+/* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ * Copyright(C) 2026, Mickael Palma / MP Consulting. All rights reserved.
+ *
+ * controllers.js: Controller management UI.
+ */
 import { $, el, escapeHtml, setButtonLoading, showScreen } from './dom-helpers.js';
 import { getControllers, saveConfig, state } from './state.js';
 import { openFeatureOptions } from './feature-options.js';
