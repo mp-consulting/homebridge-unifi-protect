@@ -49,9 +49,9 @@ describe('settings', () => {
 
   describe('plugin identity', () => {
 
-    it('PLUGIN_NAME equals "homebridge-unifi-protect"', () => {
+    it('PLUGIN_NAME equals "@mp-consulting/homebridge-unifi-protect"', () => {
 
-      expect(PLUGIN_NAME).toBe('homebridge-unifi-protect');
+      expect(PLUGIN_NAME).toBe('@mp-consulting/homebridge-unifi-protect');
     });
 
     it('PLATFORM_NAME equals "UniFi Protect"', () => {

@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 1.0.5 (2026-03-26)
+
+### Fixed
+
+- **UniFi Protect v7 support**: Accept Protect v7.x firmware in the version gate (previously only v6.x was allowed).
+- **Plugin identifier**: Correct `PLUGIN_NAME` to use the scoped package name `@mp-consulting/homebridge-unifi-protect`, fixing Homebridge's cached accessory matching and the "already bridged" crash on startup.
+
+### Security
+
+- **undici** bumped from 7.19.1 to 7.24.6, fixing 6 CVEs (GHSA-f269-vfmq-vjvj, GHSA-2mjp-6q6p-2qxm, GHSA-vrm6-8vpv-qv8q, GHSA-v9p9-hfj2-hcw8, GHSA-4992-7rv2-5pvq, GHSA-phc3-fgpg-7m6h).
+- **unifi-protect** bumped from 4.27.7 to 4.28.0.
+
+### Changed
+
+- **Event schemas**: `add:event` `payload.device` now accepts `string` (in addition to `object`) for `adminActivity` events; added `payload.metadata.userAction` field; added new `update:activeSessionStat` event type.
+
 ## [1.0.4] - 2026-03-05
 
 ### Fixed

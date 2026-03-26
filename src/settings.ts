@@ -4,7 +4,7 @@
  * settings.ts: Settings and constants for homebridge-unifi-protect.
  */
 // The name of our plugin.
-export const PLUGIN_NAME = 'homebridge-unifi-protect';
+export const PLUGIN_NAME = '@mp-consulting/homebridge-unifi-protect';
 
 // The platform the plugin creates.
 export const PLATFORM_NAME = 'UniFi Protect';

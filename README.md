@@ -36,7 +36,7 @@ A [Homebridge](https://homebridge.io) plugin that brings native HomeKit support 
 |---|---|
 | [Homebridge](https://homebridge.io) | >= 1.8.0 |
 | Node.js | >= 20 |
-| UniFi Protect | v6+ |
+| UniFi Protect | v6+ (including v7) |
 | FFmpeg | Bundled, or any build with **fdk-aac** support |
 
 > [!IMPORTANT]

@@ -77,7 +77,7 @@ export const eventAddSchema: SchemaDefinition = {
   'camera':             { required: false, type: 'string' },
   'cameraId':           { required: false, type: 'string' },
   'detectedAt':         { required: false, type: 'number' },
-  'device':             { required: false, type: 'object' },
+  'device':             { required: false, type: 'object|string' },
   'end':                { required: false, type: 'number' },
   'eventId':            { required: false, type: 'string' },
   'favoriteObjectIds':  { required: false, type: 'object' },
@@ -113,6 +113,7 @@ export const eventMetadataSchema: SchemaDefinition = {
   'sensorId':           { required: false, type: 'string' },
   'sensorName':         { required: false, type: 'string' },
   'sensorType':         { required: false, type: 'string' },
+  'userAction':         { required: false, type: 'string' },
   'userName':           { required: false, type: 'string' },
 };
 
@@ -145,6 +146,16 @@ export const eventUpdateSchema: SchemaDefinition = {
   'type':               { required: false, type: 'string' },
 };
 
+// ---- Payload schemas: update:activeSessionStat ----
+
+// Active session statistics — stream/session counts per user.
+export const activeSessionStatSchema: SchemaDefinition = {
+
+  'activeSessionCount':   { required: false, type: 'number' },
+  'activeStreamCount':    { required: false, type: 'number' },
+  'userId':               { required: false, type: 'string' },
+};
+
 // ---- Event registry ----
 
 // Map action:modelKey combinations to their schemas.
@@ -171,6 +182,7 @@ export const eventSchemas: Record<string, {
     ],
   },
 
+  'update:activeSessionStat': { name: 'ACTIVE_SESSION_STAT_UPDATE', schema: activeSessionStatSchema, partial: true },
   'update:automation': { name: 'AUTOMATION_UPDATE', schema: {}, partial: true },
   'update:bridge':  { name: 'BRIDGE_UPDATE',  schema: {}, partial: true },
   'update:camera':  { name: 'CAMERA_UPDATE',  schema: {}, partial: true },
