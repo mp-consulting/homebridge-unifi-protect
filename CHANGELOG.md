@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [1.0.6] - 2026-03-30
+
+### Changed
+
+- **Dependencies**: Updated all dependencies to latest versions including `@homebridge/plugin-ui-utils` 2.2.3, `ffmpeg-for-homebridge` 2.2.2, `homebridge-plugin-utils` 1.33.0, `eslint` ^10.1.0, `typescript` ^6.0.2, `vitest` ^4.1.2, and other dev dependencies.
+
 ## 1.0.5 (2026-03-26)
 
 ### Fixed
