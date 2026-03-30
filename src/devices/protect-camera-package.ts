@@ -57,7 +57,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     // Configure the flashlight.
     this.configureFlashlight();
 
-    let hkResolutions: Resolution[] = [];
+    let hkResolutions: Resolution[];
     const validResolutions: Resolution[] = [this.findRtsp()?.resolution ?? [ 1600, 1200, 2 ]];
 
     // Ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch, while respecting aspect ratios.

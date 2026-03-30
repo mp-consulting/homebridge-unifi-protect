@@ -261,7 +261,7 @@ export class ProtectCameraControls {
       }
 
       // Determine the Protect device settings from the brightness level.
-      let nightvision = {};
+      let nightvision;
       const fixedMode = NIGHT_VISION_BRIGHTNESS_MAP.get(level);
 
       if(fixedMode) {

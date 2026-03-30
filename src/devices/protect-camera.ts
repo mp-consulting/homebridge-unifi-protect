@@ -433,7 +433,7 @@ export class ProtectCamera extends ProtectDevice {
   private configureDoorbellTrigger(): boolean {
 
     // See if we have a doorbell service configured.
-    let doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
+    const doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
 
     // Validate whether we should have this service enabled.
     if(!this.validService(this.hap.Service.Switch, this.hasFeature('Doorbell.Trigger'), ProtectReservedNames.SWITCH_DOORBELL_TRIGGER)) {
@@ -457,7 +457,7 @@ export class ProtectCamera extends ProtectDevice {
       }
 
       // Now find the doorbell service.
-      if(!(doorbellService = this.accessory.getService(this.hap.Service.Doorbell))) {
+      if(!this.accessory.getService(this.hap.Service.Doorbell)) {
 
         this.log.error('Unable to find the doorbell service.');
 

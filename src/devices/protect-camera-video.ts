@@ -90,7 +90,7 @@ export class ProtectCameraVideo {
     // Sort the list of resolutions, from high to low.
     rtspEntries.sort(sortByResolutions);
 
-    let validResolutions = [];
+    let validResolutions;
 
     // Next, ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch, while respecting aspect
     // ratios. We use the frame rate of the first entry, which should be our highest resolution option that's native to the camera as the upper bound
