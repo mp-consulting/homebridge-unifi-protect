@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [1.0.8] - 2026-04-04
+
+### Changed
+
+- **Node.js**: Add Node.js 24.x support to CI matrix and standardize engines to `^20.18.0 || ^22.10.0 || ^24.0.0`
+- **Docs**: Add "Why This Fork?" section to README
+
 ## [1.0.7] - 2026-03-30
 
 ### Changed
