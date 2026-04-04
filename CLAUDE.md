@@ -68,6 +68,7 @@ homebridge-ui/                  # Custom config UI with discovery & feature opti
 - **HKSV**: Timeshift buffer with fMP4 segments, smart object filtering
 - **Feature options**: Category-based (Audio, Device, Doorbell, Motion, Video, HKSV) with per-device granularity
 - **MQTT**: Real-time event publishing (motion, doorbell, smart objects, snapshots)
+- **Custom UI**: Uses Homebridge custom UI framework (`homebridge-ui/`) for plugin configuration management
 
 ## Key Constants (settings.ts)
 
