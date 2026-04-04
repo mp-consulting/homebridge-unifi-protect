@@ -117,6 +117,23 @@ All generally available UniFi Protect hardware is supported:
 | `npm run start` | Build and launch Homebridge with a test config |
 | `npm run monitor:events` | Run the event schema monitor script |
 
+## Why This Fork?
+
+This project is a fork of [homebridge-unifi-protect](https://github.com/hjdhjd/homebridge-unifi-protect) by [HJD](https://github.com/hjdhjd). We are grateful for HJD's foundational work and the community that has grown around it.
+
+The fork was created to pursue a different set of engineering goals that required changes too broad and opinionated to propose as pull requests to the original project:
+
+- **Substantial rewrites** — large portions of the codebase have been restructured or rewritten for performance, maintainability, and strict TypeScript usage. Changes of this scope and nature are not well-suited to incremental upstream PRs.
+- **Different architectural direction** — decisions around module boundaries, streaming pipeline design, and dependency choices diverge from the original project's approach.
+- **Independent release cadence** — maintaining a separate fork allows us to ship features, fixes, and refactors on our own schedule without waiting for upstream review cycles.
+
+### Relationship with the original project
+
+- The original project remains independently maintained and is an excellent choice for many users.
+- We do not currently submit changes back upstream, as the codebases have diverged significantly.
+- We may selectively incorporate upstream bug fixes or features when they are relevant and compatible.
+- Our roadmap is driven by our own priorities and community feedback — see [Issues](https://github.com/mp-consulting/homebridge-unifi-protect/issues) for what is planned or under discussion.
+
 ## Contributing
 
 Contributions are welcome. Please open an issue first to discuss your proposed changes.
