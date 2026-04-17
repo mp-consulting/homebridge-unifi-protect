@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [1.0.10] - 2026-04-17
+
+### Fixed
+
+- **unifi-protect dependency**: Pin back to `unifi-protect@4.28` — 4.29 renamed several payload types (`ProtectCameraConfigPayload` → `ProtectCameraConfig`, etc.) and removed `DeepIndexable`, breaking the v1.0.9 CI build
+
 ## [1.0.9] - 2026-04-17
 
 ### Changed
