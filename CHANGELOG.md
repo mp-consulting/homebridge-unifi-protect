@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [1.0.11] - 2026-04-17
+
+### Changed
+
+- **unifi-protect 4.29**: Adopt upstream type renames — `Protect*ConfigPayload` unions replaced with `DeepPartial<Protect*Config>`, `DeepIndexable` removed in favor of direct typing. Also tightened the `ledSettings` accessor and hardened the unknown-device log line against TypeScript's exhaustive union narrowing
+
 ## [1.0.10] - 2026-04-17
 
 ### Fixed

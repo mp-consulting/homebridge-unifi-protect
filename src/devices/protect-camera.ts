@@ -4,7 +4,7 @@
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory, Resolution } from 'homebridge';
-import type { ProtectCameraChannelConfig, ProtectCameraConfig, ProtectCameraConfigPayload, ProtectEventAdd, ProtectEventPacket } from 'unifi-protect';
+import type { DeepPartial, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectEventAdd, ProtectEventPacket } from 'unifi-protect';
 import { ProtectReservedNames } from '../protect-types.js';
 import { LivestreamManager } from '../protect-livestream.js';
 import type { MessageSwitchInterface } from './protect-doorbell.js';
@@ -258,7 +258,7 @@ export class ProtectCamera extends ProtectDevice {
   // Handle update-related events from the controller.
   protected eventHandler(packet: ProtectEventPacket): void {
 
-    const payload = packet.payload as ProtectCameraConfigPayload;
+    const payload = packet.payload as DeepPartial<ProtectCameraConfig>;
     const hasProperty = (properties: string | string[]): boolean => (Array.isArray(properties) ? properties : [properties]).some(p => p in payload);
 
     // Process any RTSP stream or video codec updates.
@@ -291,7 +291,7 @@ export class ProtectCamera extends ProtectDevice {
     // Process smart detection events.
     if(this.hints.smartDetect) {
 
-      const event = payload as ProtectEventAdd;
+      const event = payload as unknown as ProtectEventAdd;
 
       // Filter out any events tagged as "motion". When users enable the "Create motion events" setting on a camera, Protect will create
       // motion-specific thumbnail events. We're only interested in true smart detection events.

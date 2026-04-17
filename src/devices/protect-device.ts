@@ -693,6 +693,6 @@ export abstract class ProtectDevice extends ProtectBase {
       return false;
     }
 
-    return this.ufp.ledSettings.isEnabled;
+    return (this.ufp.ledSettings as { isEnabled?: boolean } | undefined)?.isEnabled ?? false;
   }
 }

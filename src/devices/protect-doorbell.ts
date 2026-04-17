@@ -6,8 +6,8 @@
 import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_AUTHSENSOR_DURATION, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_DOORBELL_CHIME_DURATION_MECHANICAL,
   PROTECT_DOORBELL_MESSAGE_DURATION, PROTECT_HOMEKIT_UPDATE_DELAY } from '../settings.js';
-import type { ProtectCameraConfig, ProtectCameraConfigPayload, ProtectCameraLcdMessagePayload, ProtectChimeConfigPayload, ProtectEventAdd, ProtectEventPacket,
-  ProtectNvrConfigPayload } from 'unifi-protect';
+import type { DeepPartial, ProtectCameraConfig, ProtectCameraLcdMessageConfig, ProtectChimeConfig, ProtectEventAdd, ProtectEventPacket,
+  ProtectNvrConfig } from 'unifi-protect';
 import { ProtectReservedNames } from '../protect-types.js';
 import { toCamelCase } from '../protect-utils.js';
 import { ProtectCamera } from './protect-camera.js';
@@ -643,7 +643,7 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Update the message switch state in HomeKit.
-  private updateLcdSwitch(payload: ProtectCameraLcdMessagePayload): void {
+  private updateLcdSwitch(payload: DeepPartial<ProtectCameraLcdMessageConfig>): void {
 
     // The message has been cleared on the doorbell, turn off all message switches in HomeKit.
     if(!Object.keys(payload).length) {
@@ -704,7 +704,7 @@ export class ProtectDoorbell extends ProtectCamera {
   }
 
   // Set the message on the doorbell.
-  private async setMessage(payload: ProtectCameraLcdMessagePayload = {}): Promise<boolean> {
+  private async setMessage(payload: DeepPartial<ProtectCameraLcdMessageConfig> = {}): Promise<boolean> {
 
     // We take the duration and save it for MQTT and then translate the payload into what Protect is expecting from us.
     if('duration' in payload) {
@@ -732,7 +732,7 @@ export class ProtectDoorbell extends ProtectCamera {
   // Handle doorbell-related events.
   protected eventHandler(packet: ProtectEventPacket): void {
 
-    const payload = packet.payload as ProtectCameraConfigPayload;
+    const payload = packet.payload as DeepPartial<ProtectCameraConfig>;
 
     super.eventHandler(packet);
 
@@ -813,7 +813,7 @@ export class ProtectDoorbell extends ProtectCamera {
   // Handle doorbell saved message updates on the Protect controller.
   private nvrEventHandler(packet: ProtectEventPacket): void {
 
-    const payload = packet.payload as ProtectNvrConfigPayload;
+    const payload = packet.payload as DeepPartial<ProtectNvrConfig>;
 
     // Process doorbell message save events.
     if(payload.doorbellSettings) {
@@ -822,7 +822,7 @@ export class ProtectDoorbell extends ProtectCamera {
       if(payload.doorbellSettings.customMessages && this.nvr.ufp.doorbellSettings) {
 
         const builtinMessages = this.nvr.ufp.doorbellSettings.allMessages.filter(x => x.type !== 'CUSTOM_MESSAGE');
-        const customMessages = payload.doorbellSettings.customMessages.map(x => ({ text: x, type: 'CUSTOM_MESSAGE' }));
+        const customMessages = payload.doorbellSettings.customMessages.map((x: string) => ({ text: x, type: 'CUSTOM_MESSAGE' }));
 
         this.nvr.ufp.doorbellSettings.allMessages = builtinMessages.concat(customMessages);
       }
@@ -834,7 +834,7 @@ export class ProtectDoorbell extends ProtectCamera {
   // Handle chime volume updates on the Protect controller.
   private chimeEventHandler(packet: ProtectEventPacket): void {
 
-    const payload = packet.payload as ProtectChimeConfigPayload;
+    const payload = packet.payload as DeepPartial<ProtectChimeConfig>;
 
     // We're only interested in events for this Protect controller and this doorbell.
     if(!this.nvr.ufpApi.bootstrap || (payload.nvrMac !== this.nvr.ufp.mac) || !payload.cameraIds?.includes(this.ufp.id) || !('ringSettings' in payload)) {
@@ -848,7 +848,7 @@ export class ProtectDoorbell extends ProtectCamera {
 
       this.nvr.ufpApi.bootstrap.chimes = [ ...this.nvr.ufpApi.bootstrap.chimes.filter(device => payload.id !== device.id), Object.assign(chime, payload) ];
 
-      const ring = payload.ringSettings?.find(tone => tone.cameraId === this.ufp.id);
+      const ring = payload.ringSettings?.find((tone) => tone.cameraId === this.ufp.id);
 
       if(ring && ('volume' in ring)) {
 

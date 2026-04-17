@@ -3,7 +3,7 @@
  *
  * protect-sensor.ts: Sensor device class for UniFi Protect.
  */
-import type { DeepIndexable, ProtectEventPacket, ProtectSensorConfig, ProtectSensorConfigPayload } from 'unifi-protect';
+import type { DeepPartial, ProtectEventPacket, ProtectSensorConfig } from 'unifi-protect';
 import type { PlatformAccessory, Service } from 'homebridge';
 import { HOMEKIT_AMBIENT_LIGHT_MINIMUM } from '../settings.js';
 import { ProtectDevice } from './protect-device.js';
@@ -15,7 +15,7 @@ export class ProtectSensor extends ProtectDevice {
   private enabledSensors: string[];
   private lastAlarm?: boolean;
   private lastLeak: Record<string, boolean | undefined>;
-  public ufp: DeepIndexable<ProtectSensorConfig>;
+  public ufp: ProtectSensorConfig;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, device: ProtectSensorConfig, accessory: PlatformAccessory) {
@@ -24,7 +24,7 @@ export class ProtectSensor extends ProtectDevice {
 
     this.enabledSensors = [];
     this.lastLeak = {};
-    this.ufp = device as DeepIndexable<ProtectSensorConfig>;
+    this.ufp = device;
 
     this.configureHints();
     this.configureDevice();
@@ -346,7 +346,7 @@ export class ProtectSensor extends ProtectDevice {
       }
 
       // Validate whether we should have this service enabled.
-      if(!this.validService(serviceType, this.ufp.leakSettings[sensor.isEnabled], sensor.subtype)) {
+      if(!this.validService(serviceType, (this.ufp.leakSettings as Record<string, boolean>)[sensor.isEnabled], sensor.subtype)) {
 
         continue;
       }
@@ -532,7 +532,7 @@ export class ProtectSensor extends ProtectDevice {
   // Handle sensor-related events.
   private eventHandler(packet: ProtectEventPacket): void {
 
-    const payload = packet.payload as ProtectSensorConfigPayload;
+    const payload = packet.payload as DeepPartial<ProtectSensorConfig>;
 
     // It's a motion event - process it accordingly.
     if(payload.motionDetectedAt) {

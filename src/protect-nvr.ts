@@ -302,11 +302,14 @@ export class ProtectNvr {
 
         break;
 
-      default:
+      default: {
 
-        this.log.error('Unknown device class %s detected for %s.', device.modelKey, device.name ?? device.marketName);
+        const unknown = device as { modelKey: string; name: string; marketName: string };
+
+        this.log.error('Unknown device class %s detected for %s.', unknown.modelKey, unknown.name ?? unknown.marketName);
 
         return null;
+      }
     }
 
     // Return our newly created device.
