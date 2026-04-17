@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [1.0.9] - 2026-04-17
+
+### Changed
+
+- **Dependencies**: Updated all dependencies to latest versions, including major bump for `undici` (7→8), and minor bumps for `homebridge-plugin-utils` (1.33→1.35) and `unifi-protect` (4.28→4.29)
+
 ## [1.0.8] - 2026-04-04
 
 ### Changed
