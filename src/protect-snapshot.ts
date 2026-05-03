@@ -4,6 +4,7 @@
  * protect-snapshot.ts: UniFi Protect HomeKit snapshot class.
  */
 import type { API, HAP, SnapshotRequest } from 'homebridge';
+import { Agent, request } from 'undici';
 import { FfmpegExec, type HomebridgePluginLogging, type Nullable, runWithTimeout } from 'homebridge-plugin-utils';
 import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE, PROTECT_SNAPSHOT_TIMEOUT } from './settings.js';
 import type { ProtectCamera } from './devices/index.js';
@@ -59,7 +60,14 @@ export class ProtectSnapshot {
     // a lengthier response time.
     const snapshotPromise = (async (): Promise<Nullable<Buffer>> => {
 
-      let snapAttempt = await this.snapFromTimeshift(request);
+      // If a snapshot URL override is configured (typically for ONVIF and other third-party cameras), prefer it - the Protect controller's snapshot
+      // API does not work reliably for these devices.
+      let snapAttempt = await this.snapFromUrlOverride();
+
+      if(!snapAttempt) {
+
+        snapAttempt = await this.snapFromTimeshift(request);
+      }
 
       // No snapshot yet, let's try again.
       if(!snapAttempt) {
@@ -114,6 +122,47 @@ export class ProtectSnapshot {
     }
 
     return this._cachedSnapshot?.image ?? null;
+  }
+
+  // Snapshots fetched directly from a user-provided URL on the camera, bypassing the Protect controller. Used for ONVIF and other third-party
+  // cameras that expose their own snapshot endpoint.
+  private async snapFromUrlOverride(): Promise<Nullable<Buffer>> {
+
+    const overrideUrl = this.protectCamera.hints.snapshotUrlOverride;
+
+    if(!overrideUrl) {
+
+      return null;
+    }
+
+    try {
+
+      // Allow self-signed certificates - third-party cameras commonly serve HTTPS with non-public certs.
+      const dispatcher = overrideUrl.startsWith('https://') ?
+        new Agent({ connect: { rejectUnauthorized: false } }) :
+        undefined;
+
+      const { statusCode, body } = await request(overrideUrl, {
+
+        dispatcher,
+        method: 'GET',
+        signal: AbortSignal.timeout(PROTECT_SNAPSHOT_TIMEOUT),
+      });
+
+      if(statusCode !== 200) {
+
+        this.log.warn('Snapshot URL override returned HTTP %s.', statusCode);
+
+        return null;
+      }
+
+      return Buffer.from(await body.arrayBuffer());
+    } catch(error) {
+
+      this.log.warn('Snapshot URL override request failed: %s.', error instanceof Error ? error.message : String(error));
+
+      return null;
+    }
   }
 
   // Snapshots using the timeshift buffer as the source.

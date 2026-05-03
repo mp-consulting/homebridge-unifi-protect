@@ -39,52 +39,107 @@ export class ProtectCameraVideo {
   public async configure(): Promise<boolean> {
 
     const rtspEntries: RtspEntry[] = [];
+    const rtspOverride = this.camera.hints.rtspOverride;
 
     // No channels exist on this camera or we don't have access to the bootstrap configuration.
     if(!this.camera.ufp.channels.length) {
 
-      return false;
-    }
-
-    // Enable RTSP on the camera if needed and get the list of RTSP streams we have ultimately configured.
-    this.camera.ufp = await this.camera.nvr.ufpApi.enableRtsp(this.camera.ufp) ?? this.camera.ufp;
-
-    // Figure out which camera channels are RTSP-enabled, and user-enabled. We also filter out any package camera entries. We deal with those
-    // independently elsewhere.
-    const cameraChannels = this.camera.ufp.channels.filter(channel => channel.isRtspEnabled && (channel.name !== 'Package Camera'));
-
-    // Set the camera and shapshot URLs.
-    const cameraUrl = 'rtsps://' +
-      (this.camera.nvr.config.overrideAddress ?? this.camera.ufp.connectionHost ?? this.camera.nvr.ufp.host) + ':' +
-      this.camera.nvr.ufp.ports.rtsps.toString() + '/';
-
-    // No RTSP streams are available that meet our criteria - we're done.
-    if(!cameraChannels.length) {
-
-      this.camera.log.info('No RTSP profiles found for this camera. ' +
-        'Enable at least one RTSP profile in the UniFi Protect webUI or assign an admin role to the local Protect user you configured for use ' +
-        'with this plugin.');
+      this.camera.log.warn('No camera channel metadata available from the Protect controller. ' +
+        'Streaming cannot be configured for this camera. This typically means the camera has not finished initializing on the controller, ' +
+        'or that the local Protect user this plugin is configured with lacks an admin role.');
 
       return false;
     }
 
-    // Now that we have our RTSP streams, create a list of supported resolutions for HomeKit.
-    for(const channel of cameraChannels) {
+    // If a per-camera RTSP override URL is configured, build a single RTSP entry from it and skip the controller-side relay setup. This is the only
+    // viable streaming path for ONVIF and other third-party cameras that the Protect controller does not actually relay over its RTSPS endpoint,
+    // despite reporting isRtspEnabled on each channel.
+    if(rtspOverride) {
+
+      // Use the highest-resolution channel reported by the Protect controller as the metadata source for HomeKit. The override URL itself is the
+      // single source of pixels regardless of which channel HomeKit asks for.
+      const sourceChannel = [ ...this.camera.ufp.channels ].sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
 
       // Sanity check in case Protect reports nonsensical resolutions.
-      if(!channel.name || (channel.width <= 0) || (channel.width > 65535) || (channel.height <= 0) || (channel.height > 65535)) {
+      if(!sourceChannel.name || (sourceChannel.width <= 0) || (sourceChannel.width > 65535) || (sourceChannel.height <= 0) ||
+        (sourceChannel.height > 65535)) {
 
-        continue;
+        this.camera.log.warn('RTSP override is set but the camera channels report invalid resolutions. Streaming cannot be configured.');
+
+        return false;
       }
 
       rtspEntries.push({
 
-        channel: channel,
-        name: formatResolution([ channel.width, channel.height, channel.fps ]) + ' (' + channel.name + ') [' +
-          (this.camera.ufp.videoCodec.replace('h265', 'hevc')).toUpperCase() + ']',
-        resolution: [ channel.width, channel.height, channel.fps ],
-        url: cameraUrl + channel.rtspAlias + '?enableSrtp',
+        channel: sourceChannel,
+        name: formatResolution([ sourceChannel.width, sourceChannel.height, sourceChannel.fps ]) + ' (Override) [' +
+          ((this.camera.ufp.videoCodec || 'h264').replace('h265', 'hevc')).toUpperCase() + ']',
+        resolution: [ sourceChannel.width, sourceChannel.height, sourceChannel.fps ],
+        url: rtspOverride,
       });
+
+      this.camera.log.info('Using a custom RTSP URL for livestreams. The Protect controller will not be used to relay this stream.');
+    } else {
+
+      // Enable RTSP on the camera if needed and get the list of RTSP streams we have ultimately configured.
+      this.camera.ufp = await this.camera.nvr.ufpApi.enableRtsp(this.camera.ufp) ?? this.camera.ufp;
+
+      // Figure out which camera channels are RTSP-enabled, and user-enabled. We also filter out any package camera entries. We deal with those
+      // independently elsewhere.
+      const cameraChannels = this.camera.ufp.channels.filter(channel => channel.isRtspEnabled && (channel.name !== 'Package Camera'));
+
+      // For ONVIF and other third-party cameras, the controller's RTSPS relay frequently isn't usable even when isRtspEnabled is reported on
+      // every channel. Surface a hint so users know about the override option instead of silently failing.
+      if(this.camera.ufp.isThirdPartyCamera) {
+
+        this.camera.log.warn('Third-party camera detected without an RTSP override URL. The Protect controller often does not relay third-party ' +
+          'camera streams successfully. If livestreams fail to render in HomeKit, set the Video.Stream.RtspOverride feature option to the ' +
+          "camera's native RTSP(S) URL (see docs/onvif-camera-support.md).");
+      }
+
+      // Set the camera and shapshot URLs.
+      const cameraUrl = 'rtsps://' +
+        (this.camera.nvr.config.overrideAddress ??
+          (this.camera.ufp.isThirdPartyCamera ? this.camera.nvr.ufp.host : this.camera.ufp.connectionHost) ??
+          this.camera.nvr.ufp.host) + ':' +
+        this.camera.nvr.ufp.ports.rtsps.toString() + '/';
+
+      // No RTSP streams are available that meet our criteria - we're done.
+      if(!cameraChannels.length) {
+
+        this.camera.log.info('No RTSP profiles found for this camera. ' +
+          'Enable at least one RTSP profile in the UniFi Protect webUI or assign an admin role to the local Protect user you configured for use ' +
+          'with this plugin.');
+
+        return false;
+      }
+
+      // Now that we have our RTSP streams, create a list of supported resolutions for HomeKit.
+      for(const channel of cameraChannels) {
+
+        // Sanity check in case Protect reports nonsensical resolutions.
+        if(!channel.name || (channel.width <= 0) || (channel.width > 65535) || (channel.height <= 0) || (channel.height > 65535)) {
+
+          continue;
+        }
+
+        rtspEntries.push({
+
+          channel: channel,
+          name: formatResolution([ channel.width, channel.height, channel.fps ]) + ' (' + channel.name + ') [' +
+            (this.camera.ufp.videoCodec.replace('h265', 'hevc')).toUpperCase() + ']',
+          resolution: [ channel.width, channel.height, channel.fps ],
+          url: cameraUrl + channel.rtspAlias + '?enableSrtp',
+        });
+      }
+    }
+
+    // No RTSP entries were produced (channels reported all-invalid resolutions). Bail rather than continue with an empty list.
+    if(!rtspEntries.length) {
+
+      this.camera.log.warn('No usable RTSP streams could be derived for this camera. Streaming cannot be configured.');
+
+      return false;
     }
 
     // Sort the list of resolutions, from high to low.

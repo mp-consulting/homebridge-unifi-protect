@@ -111,6 +111,8 @@ export class ProtectCamera extends ProtectDevice {
       this.hasFeature('Device.NightVision.Dimmer');
     this.hints.nvrRecordingSwitch = this.hasFeature('Nvr.Recording.Switch');
     this.hints.probesize = PROTECT_FFMPEG_PROBESIZE;
+    this.hints.rtspOverride = this.ufp.isThirdPartyCamera ? (this.getFeatureValue('Video.Stream.RtspOverride')?.trim() ?? '') : '';
+    this.hints.snapshotUrlOverride = this.ufp.isThirdPartyCamera ? (this.getFeatureValue('Video.Snapshot.UrlOverride')?.trim() ?? '') : '';
     this.hints.smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature('Motion.SmartDetect');
     this.hints.smartDetectSensors = this.hints.smartDetect && this.hasFeature('Motion.SmartDetect.ObjectSensors');
     this.hints.transcode = this.hasFeature('Video.Transcode');

@@ -39,6 +39,8 @@ export interface ProtectHints {
   occupancyDuration: number;
   probesize: number;
   recordingDefault: string;
+  rtspOverride: string;
+  snapshotUrlOverride: string;
   smartDetect: boolean;
   smartDetectSensors: boolean;
   smartOccupancy: string[];
@@ -161,6 +163,8 @@ export abstract class ProtectDevice extends ProtectBase {
       occupancyDuration: PROTECT_OCCUPANCY_DURATION,
       probesize: 0,
       recordingDefault: '',
+      rtspOverride: '',
+      snapshotUrlOverride: '',
       smartDetect: false,
       smartDetectSensors: false,
       smartOccupancy: [],
