@@ -110,6 +110,7 @@ export const openFeatureOptions = async (controllerIndex) => {
   $('optionsLoading').style.display = 'block';
   $('optionsContainer').innerHTML = '';
   $('deviceInfoPanel').style.display = 'none';
+  $('thirdPartyOverridesPanel').style.display = 'none';
   $('unsavedChanges').style.display = 'none';
   $('optionsSearch').value = '';
 
@@ -188,6 +189,9 @@ export const renderOptions = () => {
 
     $('deviceInfoPanel').style.display = 'none';
   }
+
+  // Third-party camera URL overrides panel.
+  renderThirdPartyOverridesPanel(scope);
 
   let totalModified = 0;
 
@@ -528,4 +532,97 @@ const removeOption = (optionKey, scope) => {
   saveConfigSilent();
   $('unsavedChanges').style.display = 'block';
   renderOptions();
+};
+
+// Match the MAC normalization used by findCameraOverride() in src/protect-options.ts.
+const normalizeMac = (mac) => (mac || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
+
+// Render the per-camera URL override panel for ONVIF / third-party cameras.
+const renderThirdPartyOverridesPanel = (scope) => {
+
+  const panel = $('thirdPartyOverridesPanel');
+  const rtspInput = $('thirdPartyRtspUrl');
+  const snapshotInput = $('thirdPartySnapshotUrl');
+
+  // The panel only applies to a specific third-party camera (device scope), not to global / controller scopes.
+  if(!scope.device || (scope.device.modelKey !== 'camera') || !scope.device.isThirdPartyCamera) {
+
+    panel.style.display = 'none';
+
+    return;
+  }
+
+  const ctrl = state.pluginConfig[0]?.controllers?.[state.currentControllerIndex];
+
+  if(!ctrl) {
+
+    panel.style.display = 'none';
+
+    return;
+  }
+
+  const target = normalizeMac(scope.device.mac);
+  const existing = (ctrl.cameraOverrides || []).find(entry => normalizeMac(entry.mac) === target);
+
+  rtspInput.value = existing?.rtspUrl || '';
+  snapshotInput.value = existing?.snapshotUrl || '';
+  panel.style.display = 'block';
+
+  // Bind change handlers once per render. Replacing the input elements clears any prior listeners (jsdom-style cloneNode would also work, but
+  // re-querying is enough since we set the value just above).
+  rtspInput.oninput = () => updateCameraOverride(scope.device.mac, 'rtspUrl', rtspInput.value);
+  snapshotInput.oninput = () => updateCameraOverride(scope.device.mac, 'snapshotUrl', snapshotInput.value);
+};
+
+// Update a single field on the per-camera override entry, creating or removing the entry as needed.
+const updateCameraOverride = (mac, field, rawValue) => {
+
+  const ctrl = state.pluginConfig[0]?.controllers?.[state.currentControllerIndex];
+
+  if(!ctrl) {
+
+    return;
+  }
+
+  const value = (rawValue || '').trim();
+  const target = normalizeMac(mac);
+
+  ctrl.cameraOverrides ||= [];
+
+  let entry = ctrl.cameraOverrides.find(e => normalizeMac(e.mac) === target);
+
+  if(!entry) {
+
+    // No existing entry. If the new value is empty, there's nothing to do.
+    if(!value) {
+
+      return;
+    }
+
+    entry = { mac };
+    ctrl.cameraOverrides.push(entry);
+  }
+
+  if(value) {
+
+    entry[field] = value;
+  } else {
+
+    delete entry[field];
+  }
+
+  // If the entry no longer carries any URL fields, drop it to keep the config clean.
+  if(!entry.rtspUrl && !entry.snapshotUrl) {
+
+    ctrl.cameraOverrides = ctrl.cameraOverrides.filter(e => e !== entry);
+  }
+
+  // If the array is now empty, drop it entirely.
+  if(!ctrl.cameraOverrides.length) {
+
+    delete ctrl.cameraOverrides;
+  }
+
+  saveConfigSilent();
+  $('unsavedChanges').style.display = 'block';
 };

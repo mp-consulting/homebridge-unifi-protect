@@ -222,6 +222,26 @@
             <p class="mt-2 text-muted">Loading options...</p>
           </div>
 
+          <!-- Third-party camera URL overrides (visible only for ONVIF / third-party cameras) -->
+          <div id="thirdPartyOverridesPanel" class="card mb-3" style="display: none;">
+            <div class="card-header bg-transparent py-2">
+              <small><i class="bi bi-router"></i> Third-Party Camera URLs</small>
+            </div>
+            <div class="card-body py-2">
+              <p class="text-muted small mb-2">
+                The Protect controller often does not relay this camera's stream. Provide its native URLs to bypass the controller. Leave blank to remove the override.
+              </p>
+              <div class="mb-2">
+                <label for="thirdPartyRtspUrl" class="form-label small mb-1">Direct RTSP / RTSPS URL</label>
+                <input type="text" class="form-control form-control-sm" id="thirdPartyRtspUrl" placeholder="rtsp://user:pass@host:port/path" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="mb-0">
+                <label for="thirdPartySnapshotUrl" class="form-label small mb-1">Direct Snapshot URL</label>
+                <input type="text" class="form-control form-control-sm" id="thirdPartySnapshotUrl" placeholder="http://host:port/snapshot" autocomplete="off" spellcheck="false">
+              </div>
+            </div>
+          </div>
+
           <!-- Options container -->
           <div id="optionsContainer" class="mb-3"></div>
 

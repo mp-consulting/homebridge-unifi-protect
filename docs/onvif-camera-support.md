@@ -39,7 +39,20 @@ Replace `<nvr-ip>` with the controller IP and `<rtspAlias>` with the value visib
 
 ### Configuration
 
-Per-camera URL overrides live on the controller config (not in the feature options webUI), because the feature options framework cannot represent values that contain dots, slashes, or query strings. Add a `cameraOverrides` array to the controller block in `config.json` and restart Homebridge after editing.
+There are two equivalent ways to provide the override URLs.
+
+#### From the Homebridge UI (recommended)
+
+1. Open the plugin's settings page in Homebridge.
+2. Click **Feature Options** for the controller that adopted the camera.
+3. Select the third-party camera in the scope dropdown.
+4. The **Third-Party Camera URLs** panel appears at the top of the page with two inputs - paste the camera's RTSP and snapshot URLs and the change saves automatically. Restart Homebridge for the new URLs to take effect.
+
+The panel only shows for cameras the controller has flagged as third-party (`isThirdPartyCamera === true`); native UniFi cameras don't see it.
+
+#### From `config.json` directly
+
+Per-camera URL overrides live on the controller config block. Add a `cameraOverrides` array and restart Homebridge after editing.
 
 ```json
 {
