@@ -541,12 +541,16 @@ const normalizeMac = (mac) => (mac || '').replace(/[^0-9a-fA-F]/g, '').toLowerCa
 const renderThirdPartyOverridesPanel = (scope) => {
 
   const panel = $('thirdPartyOverridesPanel');
+  const header = $('thirdPartyOverridesHeader');
+  const body = $('thirdPartyOverridesBody');
+  const toggle = $('thirdPartyOverridesToggle');
   const rtspInput = $('thirdPartyRtspUrl');
   const snapshotInput = $('thirdPartySnapshotUrl');
   const onvifHost = $('thirdPartyOnvifHost');
   const onvifPort = $('thirdPartyOnvifPort');
   const onvifUser = $('thirdPartyOnvifUser');
   const onvifPass = $('thirdPartyOnvifPass');
+  const onvifPath = $('thirdPartyOnvifPath');
   const discoverBtn = $('thirdPartyDiscoverBtn');
   const status = $('thirdPartyDiscoverStatus');
 
@@ -579,15 +583,32 @@ const renderThirdPartyOverridesPanel = (scope) => {
   onvifPort.value = '';
   onvifUser.value = '';
   onvifPass.value = '';
+  onvifPath.value = '';
   status.textContent = '';
-  status.className = 'small';
+  status.className = 'small flex-grow-1';
 
   panel.style.display = 'block';
 
+  // Apply persisted open/closed state. Default closed to match the category cards below.
+  applyThirdPartyPanelOpenState(body, toggle);
+
   // Re-bind handlers on each render. Setting onX handlers (rather than addEventListener) automatically replaces any prior listener.
+  header.onclick = () => {
+
+    state.thirdPartyPanelOpen = !state.thirdPartyPanelOpen;
+    applyThirdPartyPanelOpenState(body, toggle);
+  };
+
   rtspInput.oninput = () => updateCameraOverride(scope.device.mac, 'rtspUrl', rtspInput.value);
   snapshotInput.oninput = () => updateCameraOverride(scope.device.mac, 'snapshotUrl', snapshotInput.value);
   discoverBtn.onclick = () => discoverOnvifAndPopulate(scope.device.mac);
+};
+
+// Sync the body's `.open` class and the chevron direction with state.thirdPartyPanelOpen.
+const applyThirdPartyPanelOpenState = (body, toggle) => {
+
+  body.classList.toggle('open', state.thirdPartyPanelOpen);
+  toggle.className = 'bi bi-chevron-' + (state.thirdPartyPanelOpen ? 'up' : 'down') + ' toggle-icon';
 };
 
 // Call the backend ONVIF discovery endpoint and, on success, populate the URL fields and persist them.
@@ -597,6 +618,7 @@ const discoverOnvifAndPopulate = async (mac) => {
   const onvifPort = $('thirdPartyOnvifPort');
   const onvifUser = $('thirdPartyOnvifUser');
   const onvifPass = $('thirdPartyOnvifPass');
+  const onvifPath = $('thirdPartyOnvifPath');
   const discoverBtn = $('thirdPartyDiscoverBtn');
   const status = $('thirdPartyDiscoverStatus');
   const rtspInput = $('thirdPartyRtspUrl');
@@ -605,18 +627,19 @@ const discoverOnvifAndPopulate = async (mac) => {
   const host = onvifHost.value.trim();
   const username = onvifUser.value.trim();
   const password = onvifPass.value;
+  const servicePath = onvifPath.value.trim();
 
   if(!host || !username) {
 
     status.textContent = 'IP address and username are required.';
-    status.className = 'small text-danger';
+    status.className = 'small flex-grow-1 text-danger';
 
     return;
   }
 
   discoverBtn.disabled = true;
   status.textContent = 'Discovering…';
-  status.className = 'small text-muted';
+  status.className = 'small flex-grow-1 text-muted';
 
   try {
 
@@ -625,13 +648,14 @@ const discoverOnvifAndPopulate = async (mac) => {
       host,
       password,
       port: onvifPort.value ? parseInt(onvifPort.value, 10) : undefined,
+      servicePath: servicePath || undefined,
       username,
     });
 
     if(!result?.ok) {
 
       status.textContent = 'Discovery failed: ' + (result?.error || 'unknown error');
-      status.className = 'small text-danger';
+      status.className = 'small flex-grow-1 text-danger';
 
       return;
     }
@@ -651,16 +675,16 @@ const discoverOnvifAndPopulate = async (mac) => {
     if(!result.rtspUrl && !result.snapshotUrl) {
 
       status.textContent = 'Camera did not return any URLs.';
-      status.className = 'small text-warning';
+      status.className = 'small flex-grow-1 text-warning';
     } else {
 
       status.textContent = 'Discovered URLs on port ' + result.port + '.';
-      status.className = 'small text-success';
+      status.className = 'small flex-grow-1 text-success';
     }
   } catch(err) {
 
     status.textContent = 'Discovery failed: ' + (err?.message || err);
-    status.className = 'small text-danger';
+    status.className = 'small flex-grow-1 text-danger';
   } finally {
 
     discoverBtn.disabled = false;

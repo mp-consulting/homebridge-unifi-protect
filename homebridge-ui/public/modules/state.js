@@ -13,6 +13,7 @@ export const state = {
   openCategories: new Set(),
   options: {},
   pluginConfig: [],
+  thirdPartyPanelOpen: false,
 };
 
 export const getControllers = () => state.pluginConfig[0]?.controllers || [];

@@ -11,9 +11,11 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
 
-// Common ONVIF service ports tried in order when the user does not specify one or when the configured port refuses the connection. The first entry is
-// the default ONVIF service port (80); 8000/8080/2020 cover the bulk of consumer cameras (Tapo uses 2020).
-const DEFAULT_ONVIF_PORTS = [ 80, 8000, 8080, 2020 ];
+// Common ONVIF service ports tried in order when the user does not specify one or when the configured port refuses the connection. 80 is the spec
+// default; 8000/8080/2020/8899 cover the bulk of consumer cameras (Tapo uses 2020, some Hikvision/Dahua use 8000/8080, Reolink uses 8000).
+const DEFAULT_ONVIF_PORTS = [ 80, 8000, 8080, 2020, 8899 ];
+
+const DEFAULT_SERVICE_PATH = '/onvif/device_service';
 
 const SOAP_TIMEOUT_MS = 5000;
 
@@ -222,9 +224,9 @@ function injectCredentials(uri, username, password) {
 }
 
 // Run the full discovery flow against a single host:port. Throws if anything goes wrong - the caller is expected to walk through fallback ports.
-async function discoverAt(host, port, username, password) {
+async function discoverAt(host, port, servicePath, username, password) {
 
-  const deviceServiceUrl = 'http://' + host + ':' + port + '/onvif/device_service';
+  const deviceServiceUrl = 'http://' + host + ':' + port + servicePath;
   const mediaServiceUrl = await getMediaServiceUrl(deviceServiceUrl, username, password);
   const profileToken = await getFirstProfileToken(mediaServiceUrl, username, password);
   const [ rtspUri, snapshotUri ] = await Promise.all([
@@ -241,38 +243,43 @@ async function discoverAt(host, port, username, password) {
   };
 }
 
-// Public entry point. Tries the user-supplied port first (or 80), then falls back to other common ONVIF ports if the connection fails. Authentication
-// failures are NOT retried across ports - they bubble up immediately so the user sees the real reason.
-export async function discoverOnvifEndpoints({ host, port, username, password }) {
+// Public entry point. Tries the user-supplied port first (or each common port), then falls back to other common ONVIF ports if the connection fails.
+// Authentication failures are NOT retried across ports - they bubble up immediately so the user sees the real reason.
+export async function discoverOnvifEndpoints({ host, port, servicePath, username, password }) {
 
   if(!host || !username) {
 
     throw new Error('host and username are required.');
   }
 
+  const path = (servicePath?.trim() || DEFAULT_SERVICE_PATH).replace(/^(?!\/)/, '/');
   const portsToTry = port ? [ port, ...DEFAULT_ONVIF_PORTS.filter(p => p !== port) ] : DEFAULT_ONVIF_PORTS;
-  let lastError;
+  const attempts = [];
 
   for(const candidate of portsToTry) {
 
     try {
 
-      const result = await discoverAt(host, candidate, username, password);
+      const result = await discoverAt(host, candidate, path, username, password);
 
-      return { ...result, port: candidate };
+      return { ...result, attempts, port: candidate, servicePath: path };
     } catch(err) {
 
       const message = err instanceof Error ? err.message : String(err);
+
+      attempts.push({ error: message, port: candidate });
 
       // Re-throw immediately on authentication errors - those won't get better at a different port.
       if(/sender not authorized|notauthorized|unauthorized|wsse|password/i.test(message)) {
 
         throw err;
       }
-
-      lastError = err;
     }
   }
 
-  throw lastError ?? new Error('No reachable ONVIF service found on ' + host + '.');
+  // No port worked. Build a single message that lists everything tried so the user can see the actual cause for each candidate (typically all
+  // ECONNREFUSED, meaning ONVIF isn't enabled or runs on a non-standard port).
+  const summary = attempts.map(a => 'port ' + a.port + ': ' + a.error).join('; ');
+
+  throw new Error('No reachable ONVIF service on ' + host + path + ' (' + summary + ').');
 }

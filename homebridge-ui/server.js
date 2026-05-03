@@ -97,6 +97,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
           host: payload?.host?.trim(),
           password: payload?.password ?? '',
           port: payload?.port ? Number(payload.port) : undefined,
+          servicePath: payload?.servicePath?.trim(),
           username: payload?.username?.trim(),
         });
 
