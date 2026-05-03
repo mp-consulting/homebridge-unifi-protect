@@ -20,10 +20,22 @@ export type ProtectOptions = {
   videoProcessor: string;
 };
 
+// Per-camera overrides for ONVIF and other third-party cameras adopted into UniFi Protect.
+//
+// Stream and snapshot URLs are intentionally kept on the controller config (not in feature options) because the homebridge-plugin-utils feature option
+// framework stores values as a single dot-free segment after the device id - it cannot represent URLs that contain dots, slashes, or query strings.
+export interface ProtectCameraOverride {
+
+  mac: string;
+  rtspUrl?: string;
+  snapshotUrl?: string;
+}
+
 // NVR configuration options.
 export interface ProtectNvrOptions {
 
   address: string;
+  cameraOverrides?: ProtectCameraOverride[];
   doorbellMessages?: {
 
     duration: number;
@@ -35,6 +47,25 @@ export interface ProtectNvrOptions {
   overrideAddress?: string;
   username: string;
   password: string;
+}
+
+// Normalize a MAC address for case- and separator-insensitive comparison (e.g. "f6:24:49:03:a5:b3" and "F6244903A5B3" compare equal).
+export function normalizeMac(mac: string): string {
+
+  return mac.replace(/[^0-9a-fA-F]/g, '').toLowerCase();
+}
+
+// Look up a per-camera override entry for the given camera MAC across the controller's cameraOverrides list.
+export function findCameraOverride(overrides: ProtectCameraOverride[] | undefined, cameraMac: string): ProtectCameraOverride | undefined {
+
+  if(!overrides?.length || !cameraMac) {
+
+    return undefined;
+  }
+
+  const target = normalizeMac(cameraMac);
+
+  return overrides.find(entry => normalizeMac(entry.mac) === target);
 }
 
 // HBUP's webUI makes use of additional metadata to only surface the feature options relevant for a particular device. These properties provide that metadata.
@@ -190,7 +221,6 @@ export const featureOptions: Record<string, ProtectFeatureOption[]> = {
 
     { default: true, description: 'Use hardware-accelerated transcoding when available (Apple Macs, Intel Quick Sync Video-enabled CPUs, Raspberry Pi 4).', name: 'Transcode.Hardware' },
     { default: true, description: 'Use the native Protect livestream API to view livestreams.', isNotProperty: ['isThirdPartyCamera'], name: 'Stream.UseApi' },
-    { default: false, defaultValue: '', description: 'RTSP or RTSPS URL to use directly for livestreams, bypassing the Protect controller relay. Useful for ONVIF and third-party cameras that the Protect controller cannot relay. Credentials may be embedded (e.g. rtsp://user:pass@host:port/path).', hasProperty: ['isThirdPartyCamera'], inputSize: 60, name: 'Stream.RtspOverride' },
     { default: true, description: 'When streaming to low-latency clients (e.g. at home), transcode livestreams, instead of transmuxing them.', name: 'Transcode' },
     { default: true, defaultValue: PROTECT_TRANSCODE_BITRATE, description: 'Bitrate, in kilobits per second, to use when transcoding to low-latency (e.g. at home) clients, ignoring the bitrate HomeKit requests. HomeKit typically requests lower video quality than you may desire in your environment.', group: 'Transcode', name: 'Transcode.Bitrate' },
     { default: true, description: 'When streaming to high-latency clients (e.g. cellular connections), transcode livestreams instead of transmuxing them.', name: 'Transcode.HighLatency' },
@@ -204,7 +234,6 @@ export const featureOptions: Record<string, ProtectFeatureOption[]> = {
     { default: true, defaultValue: 100, description: 'Width of the crop window, as a percentage of original image width.', group: 'Crop', name: 'Crop.Width' },
     { default: true, defaultValue: 100, description: 'Height of the crop window, as a percentage of original image height.', group: 'Crop', name: 'Crop.Height' },
     { default: true, description: 'Enable higher quality snapshots.', name: 'HighResSnapshots' },
-    { default: false, defaultValue: '', description: 'HTTP or HTTPS URL to fetch snapshots directly from the camera, bypassing the Protect controller. Useful for ONVIF and third-party cameras with their own snapshot endpoint. Credentials may be embedded (e.g. http://user:pass@host:port/path).', hasProperty: ['isThirdPartyCamera'], inputSize: 60, name: 'Snapshot.UrlOverride' },
   ],
 
   // HomeKit Secure Video options.

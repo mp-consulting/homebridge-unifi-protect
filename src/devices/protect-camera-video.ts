@@ -89,12 +89,12 @@ export class ProtectCameraVideo {
       const cameraChannels = this.camera.ufp.channels.filter(channel => channel.isRtspEnabled && (channel.name !== 'Package Camera'));
 
       // For ONVIF and other third-party cameras, the controller's RTSPS relay frequently isn't usable even when isRtspEnabled is reported on
-      // every channel. Surface a hint so users know about the override option instead of silently failing.
+      // every channel. Surface a hint so users know about the override mechanism instead of silently failing.
       if(this.camera.ufp.isThirdPartyCamera) {
 
         this.camera.log.warn('Third-party camera detected without an RTSP override URL. The Protect controller often does not relay third-party ' +
-          'camera streams successfully. If livestreams fail to render in HomeKit, set the Video.Stream.RtspOverride feature option to the ' +
-          "camera's native RTSP(S) URL (see docs/onvif-camera-support.md).");
+          "camera streams successfully. If livestreams fail to render in HomeKit, add a cameraOverrides entry on this camera's controller in " +
+          "config.json with the camera's native RTSP(S) URL (see docs/onvif-camera-support.md).");
       }
 
       // Set the camera and shapshot URLs.

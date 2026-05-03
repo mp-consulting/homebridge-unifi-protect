@@ -2,9 +2,9 @@
  * Copyright(C) 2026, Mickael Palma / MP Consulting. All rights reserved.
  *
  * onvif-stream-url.test.ts: Tests for the ONVIF / third-party RTSP override and host fallback logic
- * in protect-camera-video.ts. The URL construction and rtspEntries derivation are exercised in
- * isolation against the same algorithm the production code runs.
+ * in protect-camera-video.ts plus the per-camera override lookup in protect-options.ts.
  */
+import { findCameraOverride, normalizeMac } from '../src/protect-options.js';
 
 interface Channel {
 
@@ -143,5 +143,49 @@ describe('RTSP override branch', () => {
 
     expect(buildOverrideEntry(ufp, 'rtsp://camera/path').url.startsWith('rtsp://')).toBe(true);
     expect(buildOverrideEntry(ufp, 'rtsps://camera/path').url.startsWith('rtsps://')).toBe(true);
+  });
+});
+
+describe('Per-camera override lookup', () => {
+
+  it('normalizes MAC addresses to lowercase, separator-free hex', () => {
+
+    expect(normalizeMac('F6:24:49:03:A5:B3')).toBe('f6244903a5b3');
+    expect(normalizeMac('F6244903A5B3')).toBe('f6244903a5b3');
+    expect(normalizeMac('f6-24-49-03-a5-b3')).toBe('f6244903a5b3');
+    expect(normalizeMac(' F6 24 49 03 A5 B3 ')).toBe('f6244903a5b3');
+  });
+
+  it('matches across MAC formatting differences', () => {
+
+    const overrides = [ { mac: 'F6:24:49:03:A5:B3', rtspUrl: 'rtsp://camera/wide', snapshotUrl: 'http://camera/snap' } ];
+
+    expect(findCameraOverride(overrides, 'F6244903A5B3')).toBe(overrides[0]);
+    expect(findCameraOverride(overrides, 'f6:24:49:03:a5:b3')).toBe(overrides[0]);
+  });
+
+  it('returns undefined when no override matches', () => {
+
+    const overrides = [ { mac: 'AA:BB:CC:DD:EE:FF', rtspUrl: 'rtsp://other/cam' } ];
+
+    expect(findCameraOverride(overrides, 'F6244903A5B3')).toBeUndefined();
+  });
+
+  it('returns undefined for empty or missing inputs', () => {
+
+    expect(findCameraOverride(undefined, 'F6244903A5B3')).toBeUndefined();
+    expect(findCameraOverride([], 'F6244903A5B3')).toBeUndefined();
+    expect(findCameraOverride([ { mac: 'F6244903A5B3' } ], '')).toBeUndefined();
+  });
+
+  it('returns the first matching entry when duplicates exist', () => {
+
+    const overrides = [
+
+      { mac: 'F6244903A5B3', rtspUrl: 'rtsp://first' },
+      { mac: 'F6:24:49:03:A5:B3', rtspUrl: 'rtsp://second' },
+    ];
+
+    expect(findCameraOverride(overrides, 'F6244903A5B3')).toBe(overrides[0]);
   });
 });

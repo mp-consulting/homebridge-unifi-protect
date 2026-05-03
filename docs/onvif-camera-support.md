@@ -37,33 +37,41 @@ ffmpeg -rtsp_transport tcp -i 'rtsps://<nvr-ip>:7441/<rtspAlias>?enableSrtp' -t 
 
 Replace `<nvr-ip>` with the controller IP and `<rtspAlias>` with the value visible in the Protect API for the camera channel. If FFmpeg fails to read frames, the controller is not relaying the stream and you need to configure the override URLs described below.
 
-### Configuration options
+### Configuration
 
-Both options are exposed in the Homebridge custom UI on a per-camera basis, under the **Video** category, and are only available for cameras that the Protect controller has flagged as third-party.
+Per-camera URL overrides live on the controller config (not in the feature options webUI), because the feature options framework cannot represent values that contain dots, slashes, or query strings. Add a `cameraOverrides` array to the controller block in `config.json` and restart Homebridge after editing.
 
-#### `Video.Stream.RtspOverride`
-
-Full RTSP or RTSPS URL pointing directly at the camera's own RTSP server, bypassing the Protect controller. Credentials may be embedded in the URL. When set, the plugin uses this URL for every HomeKit livestream request and skips the controller-side relay setup entirely.
-
-Example:
-
+```json
+{
+  "platforms": [
+    {
+      "platform": "UniFi Protect",
+      "controllers": [
+        {
+          "address": "192.168.5.119",
+          "username": "homebridge",
+          "password": "...",
+          "cameraOverrides": [
+            {
+              "mac": "F6:24:49:03:A5:B3",
+              "rtspUrl": "rtsp://username:password@192.168.2.100:8555/c675d_wide",
+              "snapshotUrl": "http://192.168.2.100:8681/wide"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
 ```
-rtsp://username:password@192.168.2.100:8555/c675d_wide
-```
 
-The override URL is treated as a single source. The plugin still uses the channel metadata reported by Protect (resolution, frame rate, codec) to advertise capabilities to HomeKit, but every stream HomeKit requests is fulfilled from the override URL.
+Each entry supports:
 
-#### `Video.Snapshot.UrlOverride`
+- **`mac`** *(required)* — The camera's MAC address as reported by the Protect controller. Comparison is case- and separator-insensitive, so `F6:24:49:03:A5:B3` and `F6244903A5B3` both match.
+- **`rtspUrl`** *(optional)* — Full RTSP or RTSPS URL pointing directly at the camera's own RTSP server. Credentials may be embedded. When set, the plugin uses this URL for every HomeKit livestream request and skips the controller-side relay setup entirely. The plugin still uses the channel metadata reported by Protect (resolution, frame rate, codec) to advertise capabilities to HomeKit.
+- **`snapshotUrl`** *(optional)* — Full HTTP or HTTPS URL pointing at the camera's snapshot endpoint. Credentials may be embedded. When set, snapshot requests are served from this URL first, falling back to the regular RTSP and Protect API paths only if the override request fails. Self-signed HTTPS certificates are accepted.
 
-Full HTTP or HTTPS URL pointing at the camera's snapshot endpoint, bypassing the Protect controller. Credentials may be embedded in the URL. When set, snapshot requests are served from this URL first, falling back to the regular RTSP and Protect API paths only if the override request fails.
-
-Example:
-
-```
-http://192.168.2.100:8681/wide
-```
-
-Self-signed HTTPS certificates are accepted on the override URL since most third-party cameras ship with non-public certs.
+Overrides are only applied to cameras the controller has flagged as third-party (`isThirdPartyCamera === true`); entries that match a native UniFi camera are silently ignored to prevent accidentally redirecting native streams.
 
 ### What is not supported
 

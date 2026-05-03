@@ -18,6 +18,7 @@ import { ProtectCameraVideo } from './protect-camera-video.js';
 import { ProtectDevice } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';
 import type { ProtectStreamingDelegate } from '../protect-stream.js';
+import { findCameraOverride } from '../protect-options.js';
 
 export interface RtspEntry {
 
@@ -111,8 +112,13 @@ export class ProtectCamera extends ProtectDevice {
       this.hasFeature('Device.NightVision.Dimmer');
     this.hints.nvrRecordingSwitch = this.hasFeature('Nvr.Recording.Switch');
     this.hints.probesize = PROTECT_FFMPEG_PROBESIZE;
-    this.hints.rtspOverride = this.ufp.isThirdPartyCamera ? (this.getFeatureValue('Video.Stream.RtspOverride')?.trim() ?? '') : '';
-    this.hints.snapshotUrlOverride = this.ufp.isThirdPartyCamera ? (this.getFeatureValue('Video.Snapshot.UrlOverride')?.trim() ?? '') : '';
+
+    // Per-camera URL overrides for ONVIF and other third-party cameras live on the controller config (not in feature options) because the feature
+    // option framework cannot store dot-bearing values like URLs. They only apply to cameras the controller has flagged as third-party.
+    const override = this.ufp.isThirdPartyCamera ? findCameraOverride(this.nvr.config.cameraOverrides, this.ufp.mac) : undefined;
+
+    this.hints.rtspOverride = override?.rtspUrl?.trim() ?? '';
+    this.hints.snapshotUrlOverride = override?.snapshotUrl?.trim() ?? '';
     this.hints.smartDetect = this.ufp.featureFlags.hasSmartDetect && this.hasFeature('Motion.SmartDetect');
     this.hints.smartDetectSensors = this.hints.smartDetect && this.hasFeature('Motion.SmartDetect.ObjectSensors');
     this.hints.transcode = this.hasFeature('Video.Transcode');
