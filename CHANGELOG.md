@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [1.1.0] - 2026-05-04
+
+### Added
+
+- **ONVIF / third-party camera support**: Per-camera RTSP and snapshot URL overrides for ONVIF and other third-party cameras adopted into UniFi Protect. The Protect controller often does not relay these cameras' streams over its own RTSPS endpoint (despite reporting `isRtspEnabled` on every channel); supplying the camera's own URLs bypasses the controller and renders the live stream in HomeKit. Configurable from the Homebridge custom UI (under **Feature Options → camera scope → Third-Party Camera URLs**) or directly in `config.json` via a new `cameraOverrides` array on each controller block. The custom UI also includes ONVIF auto-discovery: enter the camera's IP, port, and credentials and the plugin queries `GetCapabilities` / `GetProfiles` / `GetStreamUri` / `GetSnapshotUri` to populate the URLs automatically. See [`docs/onvif-camera-support.md`](docs/onvif-camera-support.md).
+
+### Fixed
+
+- **Third-party camera RTSP host fallback**: For third-party cameras the plugin no longer routes through the camera's own `connectionHost` (which is the camera IP, not the NVR, and does not listen on the RTSPS relay port) — falls back to the NVR host instead.
+
+### Changed
+
+- **Diagnostic logging**: When stream configuration short-circuits (no channel metadata, no usable RTSP entries, third-party camera detected without an override), the plugin now logs an explanatory warning instead of silently returning.
+
 ## [1.0.11] - 2026-04-17
 
 ### Changed
