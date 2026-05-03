@@ -419,3 +419,38 @@
   font-size: 0.85rem;
 }
 
+/* ============================================================================
+   THIRD-PARTY CAMERA URL OVERRIDES PANEL
+   UniFi-style: spacious labels-above-inputs, taller inputs, clear sectioning.
+   ============================================================================ */
+
+.third-party-panel .form-label {
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  opacity: 0.85;
+}
+
+.third-party-panel .form-control {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.third-party-panel hr {
+  opacity: 0.15;
+}
+
+.third-party-panel .card-header {
+  padding-top: 0.85rem;
+  padding-bottom: 0.85rem;
+}
+
+.third-party-panel #thirdPartyDiscoverBtn {
+  min-width: 9rem;
+}
+
+.third-party-panel #thirdPartyDiscoverBtn:disabled {
+  opacity: 0.7;
+}
+
+

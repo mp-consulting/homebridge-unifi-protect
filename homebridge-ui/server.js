@@ -8,6 +8,7 @@
 import { featureOptionCategories, featureOptions } from '../dist/protect-options.js';
 import { HomebridgePluginUiServer } from '@homebridge/plugin-ui-utils';
 import { ProtectApi } from 'unifi-protect';
+import { discoverOnvifEndpoints } from './onvif.js';
 import dgram from 'node:dgram';
 import https from 'node:https';
 import os from 'node:os';
@@ -77,7 +78,34 @@ class PluginUiServer extends HomebridgePluginUiServer {
     // Register checkStatus() with the Homebridge server API.
     this.#registerCheckStatus();
 
+    // Register discoverOnvif() with the Homebridge server API.
+    this.#registerDiscoverOnvif();
+
     this.ready();
+  }
+
+  // Register the discoverOnvif() webUI server API endpoint. Used by the third-party camera URL override panel to auto-populate the RTSP and snapshot
+  // URLs from a camera's IP and credentials, mirroring UniFi Protect's own Advanced Adoption flow.
+  #registerDiscoverOnvif() {
+
+    this.onRequest('/discoverOnvif', async (payload) => {
+
+      try {
+
+        const result = await discoverOnvifEndpoints({
+
+          host: payload?.host?.trim(),
+          password: payload?.password ?? '',
+          port: payload?.port ? Number(payload.port) : undefined,
+          username: payload?.username?.trim(),
+        });
+
+        return { ok: true, ...result };
+      } catch(err) {
+
+        return { error: err instanceof Error ? err.message : String(err), ok: false };
+      }
+    });
   }
 
   // Register the getErrorMessage() webUI server API endpoint.

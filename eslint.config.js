@@ -81,9 +81,10 @@ export default tseslint.config(
   },
   // homebridge-ui server globals
   {
-    files: ['homebridge-ui/server.js'],
+    files: ['homebridge-ui/server.js', 'homebridge-ui/*.js'],
     languageOptions: {
       globals: {
+        Buffer: 'readonly',
         console: 'readonly',
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
@@ -91,6 +92,7 @@ export default tseslint.config(
         clearInterval: 'readonly',
         process: 'readonly',
         fetch: 'readonly',
+        URL: 'readonly',
       },
     },
   },

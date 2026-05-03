@@ -543,6 +543,12 @@ const renderThirdPartyOverridesPanel = (scope) => {
   const panel = $('thirdPartyOverridesPanel');
   const rtspInput = $('thirdPartyRtspUrl');
   const snapshotInput = $('thirdPartySnapshotUrl');
+  const onvifHost = $('thirdPartyOnvifHost');
+  const onvifPort = $('thirdPartyOnvifPort');
+  const onvifUser = $('thirdPartyOnvifUser');
+  const onvifPass = $('thirdPartyOnvifPass');
+  const discoverBtn = $('thirdPartyDiscoverBtn');
+  const status = $('thirdPartyDiscoverStatus');
 
   // The panel only applies to a specific third-party camera (device scope), not to global / controller scopes.
   if(!scope.device || (scope.device.modelKey !== 'camera') || !scope.device.isThirdPartyCamera) {
@@ -566,12 +572,99 @@ const renderThirdPartyOverridesPanel = (scope) => {
 
   rtspInput.value = existing?.rtspUrl || '';
   snapshotInput.value = existing?.snapshotUrl || '';
+
+  // Pre-fill the ONVIF host with the camera's IP if Protect knows it. The UniFi controller usually stores the camera's own IP on the host field for
+  // adopted ONVIF devices, which is exactly the address we want to query for ONVIF discovery.
+  onvifHost.value = scope.device.host || '';
+  onvifPort.value = '';
+  onvifUser.value = '';
+  onvifPass.value = '';
+  status.textContent = '';
+  status.className = 'small';
+
   panel.style.display = 'block';
 
-  // Bind change handlers once per render. Replacing the input elements clears any prior listeners (jsdom-style cloneNode would also work, but
-  // re-querying is enough since we set the value just above).
+  // Re-bind handlers on each render. Setting onX handlers (rather than addEventListener) automatically replaces any prior listener.
   rtspInput.oninput = () => updateCameraOverride(scope.device.mac, 'rtspUrl', rtspInput.value);
   snapshotInput.oninput = () => updateCameraOverride(scope.device.mac, 'snapshotUrl', snapshotInput.value);
+  discoverBtn.onclick = () => discoverOnvifAndPopulate(scope.device.mac);
+};
+
+// Call the backend ONVIF discovery endpoint and, on success, populate the URL fields and persist them.
+const discoverOnvifAndPopulate = async (mac) => {
+
+  const onvifHost = $('thirdPartyOnvifHost');
+  const onvifPort = $('thirdPartyOnvifPort');
+  const onvifUser = $('thirdPartyOnvifUser');
+  const onvifPass = $('thirdPartyOnvifPass');
+  const discoverBtn = $('thirdPartyDiscoverBtn');
+  const status = $('thirdPartyDiscoverStatus');
+  const rtspInput = $('thirdPartyRtspUrl');
+  const snapshotInput = $('thirdPartySnapshotUrl');
+
+  const host = onvifHost.value.trim();
+  const username = onvifUser.value.trim();
+  const password = onvifPass.value;
+
+  if(!host || !username) {
+
+    status.textContent = 'IP address and username are required.';
+    status.className = 'small text-danger';
+
+    return;
+  }
+
+  discoverBtn.disabled = true;
+  status.textContent = 'Discovering…';
+  status.className = 'small text-muted';
+
+  try {
+
+    const result = await homebridge.request('/discoverOnvif', {
+
+      host,
+      password,
+      port: onvifPort.value ? parseInt(onvifPort.value, 10) : undefined,
+      username,
+    });
+
+    if(!result?.ok) {
+
+      status.textContent = 'Discovery failed: ' + (result?.error || 'unknown error');
+      status.className = 'small text-danger';
+
+      return;
+    }
+
+    if(result.rtspUrl) {
+
+      rtspInput.value = result.rtspUrl;
+      updateCameraOverride(mac, 'rtspUrl', result.rtspUrl);
+    }
+
+    if(result.snapshotUrl) {
+
+      snapshotInput.value = result.snapshotUrl;
+      updateCameraOverride(mac, 'snapshotUrl', result.snapshotUrl);
+    }
+
+    if(!result.rtspUrl && !result.snapshotUrl) {
+
+      status.textContent = 'Camera did not return any URLs.';
+      status.className = 'small text-warning';
+    } else {
+
+      status.textContent = 'Discovered URLs on port ' + result.port + '.';
+      status.className = 'small text-success';
+    }
+  } catch(err) {
+
+    status.textContent = 'Discovery failed: ' + (err?.message || err);
+    status.className = 'small text-danger';
+  } finally {
+
+    discoverBtn.disabled = false;
+  }
 };
 
 // Update a single field on the per-camera override entry, creating or removing the entry as needed.
