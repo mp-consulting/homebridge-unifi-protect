@@ -8,7 +8,7 @@ import { getControllers, state } from './modules/state.js';
 import { handleSetupSubmit, openAddController, renderControllers } from './modules/controllers.js';
 import { PLUGIN_NAME } from './modules/constants.js';
 import { handleDiscover } from './modules/discovery.js';
-import { renderOptions } from './modules/feature-options.js';
+import { dedupeCameraOverrides, renderOptions } from './modules/feature-options.js';
 
 // Bind event listeners for the discovery screen.
 const bindDiscoveryScreen = () => {
@@ -143,6 +143,23 @@ const init = async () => {
   }
 
   state.pluginConfig[0].name ||= PLUGIN_NAME;
+
+  // One-shot cleanup: collapse any pre-existing duplicate cameraOverrides on every controller. Older code paths (and manual edits) could leave multiple
+  // entries for the same camera; the runtime only honors the first match, so the trailing rows are dead weight worth removing on first load.
+  let dedupedAny = false;
+
+  for(const ctrl of getControllers()) {
+
+    if(dedupeCameraOverrides(ctrl)) {
+
+      dedupedAny = true;
+    }
+  }
+
+  if(dedupedAny) {
+
+    await homebridge.updatePluginConfig(state.pluginConfig);
+  }
 
   // Show the right screen.
   if(getControllers().length) {

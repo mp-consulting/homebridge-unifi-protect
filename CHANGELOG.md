@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [1.1.2] - 2026-05-04
+
+### Fixed
+
+- **Duplicate `cameraOverrides` entries**: The Homebridge custom UI now collapses any duplicate `cameraOverrides` rows that share the same camera MAC into a single merged entry. Although the lookup path always normalized MACs case- and separator-insensitively (so the runtime correctly returned the first match), legacy configs, manual edits, and controllers being removed and re-added could leave several rows for the same camera in the JSON — only the first was honored, and the trailing rows were dead weight that confused anyone reading the config. Dedup now runs in three places: a one-shot pass over every controller on initial UI load, every time the third-party panel is opened for a camera, and on every per-field write. The merge is non-destructive — later entries win on a per-field basis (reflecting most recent intent), but earlier values are preserved when the later row left a field empty, so no previously-entered data is silently lost.
+
 ## [1.1.1] - 2026-05-04
 
 ### Added

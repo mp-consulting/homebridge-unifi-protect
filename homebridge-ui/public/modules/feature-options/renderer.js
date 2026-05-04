@@ -597,6 +597,13 @@ const renderThirdPartyOverridesPanel = (scope) => {
     return;
   }
 
+  // Clean up any legacy duplicate cameraOverride rows for this controller before reading. The lookup below would only see the first match anyway, so
+  // without this the user would see one entry's values in the UI while the trailing duplicates lurked invisibly in the JSON.
+  if(dedupeCameraOverrides(ctrl)) {
+
+    saveConfigSilent();
+  }
+
   const target = normalizeMac(scope.device.mac);
   const existing = (ctrl.cameraOverrides || []).find(entry => normalizeMac(entry.mac) === target);
 
@@ -1013,6 +1020,72 @@ const CAMERA_OVERRIDE_FIELDS = [ 'rtspUrl', 'snapshotUrl', 'onvifPort', 'onvifUs
 // Fields that should be coerced to a number before being stored (so the JSON config has a numeric value, matching the schema).
 const CAMERA_OVERRIDE_NUMERIC_FIELDS = new Set([ 'onvifPort' ]);
 
+// Collapse multiple cameraOverride entries that resolve to the same camera MAC into a single entry. The lookup path already normalizes MACs when finding
+// an existing entry, so duplicates should not arise from this UI - but legacy configs, manual edits, or controllers being removed and re-added can leave
+// the array with several rows for the same camera. Without dedup, only the first match wins at runtime and the trailing rows are dead weight that
+// confuses anyone reading the JSON. Later entries win on a per-field basis (they reflect the most recent intent) but earlier entries' fields are kept if
+// the later row left them empty, so we never silently lose data the user once entered. Returns true if anything changed.
+export const dedupeCameraOverrides = (ctrl) => {
+
+  if(!ctrl?.cameraOverrides?.length) {
+
+    return false;
+  }
+
+  const merged = new Map();
+  const original = ctrl.cameraOverrides;
+
+  for(const entry of original) {
+
+    const key = normalizeMac(entry?.mac || '');
+
+    // Drop entries that don't identify a camera - they can't be matched at runtime anyway.
+    if(!key) {
+
+      continue;
+    }
+
+    const existing = merged.get(key);
+
+    if(!existing) {
+
+      merged.set(key, { ...entry });
+
+      continue;
+    }
+
+    // Merge field-by-field. A non-empty value on the later entry overrides; otherwise we keep what was already there.
+    for(const field of CAMERA_OVERRIDE_FIELDS) {
+
+      const value = entry[field];
+
+      if((value !== undefined) && (value !== '')) {
+
+        existing[field] = value;
+      }
+    }
+  }
+
+  // Drop merged entries that no longer carry any tracked fields.
+  const cleaned = [...merged.values()].filter(entry => CAMERA_OVERRIDE_FIELDS.some(f => entry[f] !== undefined));
+  const changed = (cleaned.length !== original.length) || cleaned.some((entry, i) => entry !== original[i]);
+
+  if(!changed) {
+
+    return false;
+  }
+
+  if(cleaned.length) {
+
+    ctrl.cameraOverrides = cleaned;
+  } else {
+
+    delete ctrl.cameraOverrides;
+  }
+
+  return true;
+};
+
 // Update a single field on the per-camera override entry, creating or removing the entry as needed.
 const updateCameraOverride = (mac, field, rawValue) => {
 
@@ -1022,6 +1095,9 @@ const updateCameraOverride = (mac, field, rawValue) => {
 
     return;
   }
+
+  // Collapse any pre-existing duplicates before we look up or mutate the entry, so subsequent logic operates on a clean array.
+  dedupeCameraOverrides(ctrl);
 
   const trimmed = (rawValue == null ? '' : String(rawValue)).trim();
   const target = normalizeMac(mac);
