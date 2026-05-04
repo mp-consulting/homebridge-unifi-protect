@@ -24,9 +24,18 @@ export type ProtectOptions = {
 //
 // Stream and snapshot URLs are intentionally kept on the controller config (not in feature options) because the homebridge-plugin-utils feature option
 // framework stores values as a single dot-free segment after the device id - it cannot represent URLs that contain dots, slashes, or query strings.
+//
+// ONVIF discovery credentials (port/username/password/servicePath) are persisted alongside the resulting URLs so the webUI can re-populate the
+// discovery panel without forcing the user to re-enter them on every visit. The host is intentionally not persisted - the camera's IP is owned by the
+// Protect controller and is always read live from there to avoid a stale saved copy drifting from the actual device address. None of these credential
+// fields are consumed by the runtime - only the URLs are.
 export interface ProtectCameraOverride {
 
   mac: string;
+  onvifPassword?: string;
+  onvifPort?: number;
+  onvifServicePath?: string;
+  onvifUsername?: string;
   rtspUrl?: string;
   snapshotUrl?: string;
 }

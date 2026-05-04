@@ -71,14 +71,6 @@ function extractTag(xml, tag) {
   return match ? match[1].trim() : null;
 }
 
-// Pull the value of an attribute (e.g. token) on the first opening tag.
-function extractAttr(xml, tag, attr) {
-
-  const match = new RegExp('<' + tag + '\\b[^>]*\\b' + attr + '="([^"]+)"').exec(xml);
-
-  return match ? match[1] : null;
-}
-
 // POST a SOAP envelope and return the response body as a string. Rejects on non-2xx, network error, or timeout.
 function soapPost(url, soapAction, body) {
 
@@ -156,20 +148,52 @@ async function getMediaServiceUrl(deviceServiceUrl, username, password) {
   return xAddr;
 }
 
-// GetProfiles returns the available media profiles. We pick the first one (typically the highest-resolution profile on consumer cameras).
-async function getFirstProfileToken(mediaServiceUrl, username, password) {
+// GetProfiles returns every available media profile so the UI can let the user pick the one they want (cameras typically expose at least a "main" /
+// high-res and a "sub" / low-res profile, sometimes more). Each entry carries enough metadata - profile name, resolution, encoding - for the picker
+// to be self-explanatory.
+async function getProfiles(mediaServiceUrl, username, password) {
 
   const body = '<trt:GetProfiles xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>';
   const response = await soapPost(mediaServiceUrl, 'http://www.onvif.org/ver10/media/wsdl/GetProfiles', buildEnvelope(body, username, password));
   const stripped = stripNamespaces(response);
-  const token = extractAttr(stripped, 'Profiles', 'token');
 
-  if(!token) {
+  // Each <Profiles> element carries a token attribute and nested <Name>, <VideoEncoderConfiguration>{<Encoding>, <Resolution>{<Width>, <Height>}}.
+  // We extract them with regex against the stripped XML - good enough for the deterministic ONVIF responses we deal with.
+  const profileBlocks = [];
+  const blockRe = /<Profiles\b([^>]*)>([\s\S]*?)<\/Profiles>/g;
+  let match;
+
+  while((match = blockRe.exec(stripped)) !== null) {
+
+    const attrs = match[1];
+    const inner = match[2];
+    const tokenMatch = /\btoken="([^"]+)"/.exec(attrs);
+
+    if(!tokenMatch) {
+
+      continue;
+    }
+
+    const encoderBlock = /<VideoEncoderConfiguration\b[^>]*>([\s\S]*?)<\/VideoEncoderConfiguration>/.exec(inner)?.[1] ?? '';
+    const resolutionBlock = /<Resolution\b[^>]*>([\s\S]*?)<\/Resolution>/.exec(encoderBlock)?.[1] ?? '';
+    const width = extractTag(resolutionBlock, 'Width');
+    const height = extractTag(resolutionBlock, 'Height');
+
+    profileBlocks.push({
+
+      encoding: extractTag(encoderBlock, 'Encoding'),
+      name: extractTag(inner, 'Name'),
+      resolution: (width && height) ? { height: Number(height), width: Number(width) } : null,
+      token: tokenMatch[1],
+    });
+  }
+
+  if(!profileBlocks.length) {
 
     throw new Error('Camera returned no media profiles.');
   }
 
-  return token;
+  return profileBlocks;
 }
 
 // GetStreamUri returns the live RTSP URL for a given profile.
@@ -224,23 +248,32 @@ function injectCredentials(uri, username, password) {
 }
 
 // Run the full discovery flow against a single host:port. Throws if anything goes wrong - the caller is expected to walk through fallback ports.
+// Returns one entry per profile, each carrying its own RTSP and snapshot URL plus the metadata the UI uses to label the picker.
 async function discoverAt(host, port, servicePath, username, password) {
 
   const deviceServiceUrl = 'http://' + host + ':' + port + servicePath;
   const mediaServiceUrl = await getMediaServiceUrl(deviceServiceUrl, username, password);
-  const profileToken = await getFirstProfileToken(mediaServiceUrl, username, password);
-  const [ rtspUri, snapshotUri ] = await Promise.all([
+  const profiles = await getProfiles(mediaServiceUrl, username, password);
 
-    getStreamUri(mediaServiceUrl, profileToken, username, password).catch(() => null),
-    getSnapshotUri(mediaServiceUrl, profileToken, username, password).catch(() => null),
-  ]);
+  // Fan out per profile so we can fetch all stream and snapshot URLs in a single round of parallelism. Individual profile failures are tolerated -
+  // we still want to surface the profiles that did work.
+  const results = await Promise.all(profiles.map(async (profile) => {
 
-  return {
+    const [ rtspUri, snapshotUri ] = await Promise.all([
 
-    profileToken,
-    rtspUrl: injectCredentials(rtspUri, username, password),
-    snapshotUrl: injectCredentials(snapshotUri, username, password),
-  };
+      getStreamUri(mediaServiceUrl, profile.token, username, password).catch(() => null),
+      getSnapshotUri(mediaServiceUrl, profile.token, username, password).catch(() => null),
+    ]);
+
+    return {
+
+      ...profile,
+      rtspUrl: injectCredentials(rtspUri, username, password),
+      snapshotUrl: injectCredentials(snapshotUri, username, password),
+    };
+  }));
+
+  return { profiles: results };
 }
 
 // Public entry point. Tries the user-supplied port first (or each common port), then falls back to other common ONVIF ports if the connection fails.

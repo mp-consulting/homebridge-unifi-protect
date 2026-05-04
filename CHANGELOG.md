@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [1.1.1] - 2026-05-04
+
+### Added
+
+- **ONVIF profile picker with thumbnail preview**: When a third-party camera advertises multiple ONVIF profiles (e.g. dual-lens Tapo cameras with separate wide and telephoto streams), the Homebridge custom UI now lists every profile in a dropdown labeled `Name — Resolution Encoding` and shows a small live thumbnail of the selected stream so the user can pick visually rather than guess. Picking a profile populates the RTSP and snapshot URL fields and persists them to `cameraOverrides`. Profiles whose RTSP and snapshot URLs collapse to the same value are deduplicated automatically (some cameras report multiple "profiles" that all map to the same physical stream). Discovery state survives navigating between cameras in the feature-options UI, so re-opening a panel doesn't lose the picker. Behind the scenes, all snapshot fetches for a given camera are serialized through a per-camera queue — several budget cameras (Tapo included) abort the second connection mid-stream when two snapshot requests arrive at once.
+- **Persisted ONVIF discovery credentials**: The Homebridge UI now remembers the ONVIF port, username, password, and service path entered for each third-party camera in `cameraOverrides`, so re-opening the discovery panel does not force a re-entry. The host is intentionally not persisted — the camera's IP is owned by the Protect controller and is always read live from there to avoid a stale saved copy drifting from the actual device address.
+
+### Fixed
+
+- **Save Controller hangs on "Validating…"**: The webUI's `/getDevices` handler now races the `unifi-protect` login + bootstrap call against a 20-second timeout. Previously, when a controller was slow or unreachable the underlying client retried internally for ~2 minutes before giving up, leaving the Save Controller / Edit Controller flow stuck on "Validating…" with no feedback. The UI now surfaces a descriptive error within 20 seconds.
+
 ## [1.1.0] - 2026-05-04
 
 ### Added

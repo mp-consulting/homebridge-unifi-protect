@@ -10,6 +10,7 @@ import { HomebridgePluginUiServer } from '@homebridge/plugin-ui-utils';
 import { ProtectApi } from 'unifi-protect';
 import { discoverOnvifEndpoints } from './onvif.js';
 import dgram from 'node:dgram';
+import http from 'node:http';
 import https from 'node:https';
 import os from 'node:os';
 import util from 'node:util';
@@ -39,6 +40,11 @@ function isValidAddress(address) {
 const ADJACENT_SUBNET_RANGE = 5;
 const DISCOVERY_TIMEOUT = 5000;
 const UBNT_DISCOVERY_PORT = 10001;
+
+// Maximum time to wait for the controller to respond when validating credentials from the webUI. The unifi-protect client retries internally for ~2
+// minutes before giving up, which is far too long for the "Save Controller" interaction in the webUI - users see "Validating..." forever and assume the
+// page is broken. 20 seconds is long enough for a healthy controller to respond and short enough to fail visibly when something is wrong.
+const GET_DEVICES_TIMEOUT_MS = 20000;
 
 // Ubiquiti L2 Discovery Protocol: send a 4-byte packet, devices respond with TLV data.
 const UBNT_DISCOVERY_PACKET = globalThis.Buffer.from([ 0x01, 0x00, 0x00, 0x00 ]);
@@ -81,6 +87,9 @@ class PluginUiServer extends HomebridgePluginUiServer {
     // Register discoverOnvif() with the Homebridge server API.
     this.#registerDiscoverOnvif();
 
+    // Register fetchSnapshot() with the Homebridge server API.
+    this.#registerFetchSnapshot();
+
     this.ready();
   }
 
@@ -102,6 +111,119 @@ class PluginUiServer extends HomebridgePluginUiServer {
         });
 
         return { ok: true, ...result };
+      } catch(err) {
+
+        return { error: err instanceof Error ? err.message : String(err), ok: false };
+      }
+    });
+  }
+
+  // Register the fetchSnapshot() webUI server API endpoint. Acts as a CORS-bypassing proxy so the third-party camera URL override panel can render
+  // a small preview thumbnail for each ONVIF profile next to the picker. Cameras typically gate their snapshot endpoint behind HTTP Basic auth, so we
+  // pull credentials out of the URL (where ONVIF discovery embedded them) and forward them in an Authorization header. Digest-auth-only cameras will
+  // return 401 here - the picker treats that as "no thumbnail available" and the user can still pick by name/resolution.
+  #registerFetchSnapshot() {
+
+    this.onRequest('/fetchSnapshot', async (payload) => {
+
+      const url = payload?.url;
+
+      if(!url || (typeof url !== 'string')) {
+
+        return { error: 'url is required.', ok: false };
+      }
+
+      try {
+
+        const result = await new Promise((resolve, reject) => {
+
+          let parsed;
+
+          try {
+
+            parsed = new URL(url);
+          } catch(err) {
+
+            reject(err);
+
+            return;
+          }
+
+          if((parsed.protocol !== 'http:') && (parsed.protocol !== 'https:')) {
+
+            reject(new Error('Only http(s) snapshot URLs are supported.'));
+
+            return;
+          }
+
+          const lib = (parsed.protocol === 'https:') ? https : http;
+          const headers = {};
+
+          if(parsed.username) {
+
+            const creds = decodeURIComponent(parsed.username) + ':' + decodeURIComponent(parsed.password || '');
+
+            headers.Authorization = 'Basic ' + globalThis.Buffer.from(creds, 'utf8').toString('base64');
+          }
+
+          const req = lib.request({
+
+            headers,
+            hostname: parsed.hostname,
+            method: 'GET',
+            path: parsed.pathname + parsed.search,
+            port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+            rejectUnauthorized: false,
+            // 15s rather than 5s: high-res Tapo snapshots can take several seconds to stream over the local network, especially when the camera is busy.
+            timeout: 15000,
+          }, (res) => {
+
+            if(res.statusCode !== 200) {
+
+              res.resume();
+              reject(new Error('HTTP ' + res.statusCode + (res.headers['www-authenticate'] ? ' (' + res.headers['www-authenticate'] + ')' : '')));
+
+              return;
+            }
+
+            const chunks = [];
+            let totalLength = 0;
+
+            res.on('data', (chunk) => {
+
+              totalLength += chunk.length;
+
+              // Cap streaming at ~4 MB. We abort the response (rather than letting it finish then rejecting) so we don't waste bandwidth pulling down
+              // a multi-megabyte original snapshot just to throw it away. 4 MB is enough for any 4K JPEG in practice.
+              if(totalLength > 4 * 1024 * 1024) {
+
+                res.destroy();
+                reject(new Error('Snapshot payload exceeded 4 MB and was aborted.'));
+
+                return;
+              }
+
+              chunks.push(chunk);
+            });
+            res.on('end', () => {
+
+              const buffer = globalThis.Buffer.concat(chunks);
+
+              resolve({
+
+                contentType: res.headers['content-type'] || 'image/jpeg',
+                data: buffer.toString('base64'),
+              });
+            });
+            res.on('error', reject);
+          });
+
+          req.on('error', reject);
+          req.on('timeout', () => req.destroy(new Error('Snapshot fetch timed out.')));
+          req.end();
+        });
+
+        return { contentType: result.contentType, data: result.data, ok: true };
       } catch(err) {
 
         return { error: err instanceof Error ? err.message : String(err), ok: false };
@@ -150,13 +272,37 @@ class PluginUiServer extends HomebridgePluginUiServer {
         // Connect to the Protect controller.
         ufpApi = new ProtectApi(log);
 
-        if(!(await ufpApi.login(controller.address, controller.username, controller.password))) {
+        // Race the login + bootstrap against a timeout so the webUI fails visibly instead of hanging on "Validating..." for the full ~2-minute internal
+        // unifi-protect retry budget when the controller is unreachable or slow.
+        const ready = (async () => {
+
+          if(!(await ufpApi.login(controller.address, controller.username, controller.password))) {
+
+            return false;
+          }
+
+          return Boolean(await ufpApi.getBootstrap());
+        })();
+
+        let timeoutHandle;
+        const timeout = new Promise((resolve) => {
+
+          timeoutHandle = globalThis.setTimeout(() => resolve('timeout'), GET_DEVICES_TIMEOUT_MS);
+        });
+
+        const outcome = await Promise.race([ ready, timeout ]);
+
+        globalThis.clearTimeout(timeoutHandle);
+
+        if(outcome === 'timeout') {
+
+          this.errorInfo = 'Timed out after ' + (GET_DEVICES_TIMEOUT_MS / 1000) + 's waiting for ' + controller.address +
+            ' to respond. Check that the address and credentials are correct and that the controller is reachable from this Homebridge host.';
 
           return [];
         }
 
-        // Bootstrap the controller. It will emit a message once it's received the bootstrap JSON, or you can alternatively wait for the Promise to resolve.
-        if(!(await ufpApi.getBootstrap())) {
+        if(!outcome) {
 
           return [];
         }
