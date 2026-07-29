@@ -25,24 +25,41 @@ fetch() {
   curl -fsSL --retry 3 --retry-delay 1 -o "$tmpfile" "https://raw.githubusercontent.com/${SIBLING}/${1}/src/lib/${2}" 2>/dev/null
 }
 
-for file in "${FILES[@]}"; do
+check_files() {
 
-  # Prefer the same-named branch on the sibling so in-flight changes on both sides compare against each other, falling back to the default branch.
-  if fetch "$BRANCH" "$file"; then
-    ref="$BRANCH"
-  elif fetch "main" "$file"; then
-    ref="main"
-  else
-    echo "SKIP  src/lib/${file} (not present in ${SIBLING} on ${BRANCH} or main)"
-    continue
-  fi
+  status=0
 
-  if cmp -s "$tmpfile" "src/lib/${file}"; then
-    echo "OK    src/lib/${file} (matches ${SIBLING}@${ref})"
-  else
-    echo "DRIFT src/lib/${file} differs from ${SIBLING}@${ref} - sync the copies before merging"
-    status=1
-  fi
-done
+  for file in "${FILES[@]}"; do
 
-exit $status
+    # Prefer the same-named branch on the sibling so in-flight changes on both sides compare against each other, falling back to the default branch.
+    if fetch "$BRANCH" "$file"; then
+      ref="$BRANCH"
+    elif fetch "main" "$file"; then
+      ref="main"
+    else
+      echo "SKIP  src/lib/${file} (not present in ${SIBLING} on ${BRANCH} or main)"
+      continue
+    fi
+
+    if cmp -s "$tmpfile" "src/lib/${file}"; then
+      echo "OK    src/lib/${file} (matches ${SIBLING}@${ref})"
+    else
+      echo "DRIFT src/lib/${file} differs from ${SIBLING}@${ref} - sync the copies before merging"
+      status=1
+    fi
+  done
+
+  return $status
+}
+
+# Shared library changes land as paired pushes to both repositories, so this check can race the sibling's push: our CI may run before the matching commit
+# arrives on the other side. On drift, give the sibling one grace period to catch up before failing.
+if ! check_files; then
+
+  echo "Drift detected - re-checking in 60 seconds in case the sibling repository's matching push is still in flight."
+  sleep 60
+
+  check_files || exit 1
+fi
+
+exit 0
