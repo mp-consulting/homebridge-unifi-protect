@@ -7,12 +7,12 @@
 /**
  * Utilities to help decode packets from the UniFi Protect realtime events API.
  *
- * UniFi OS update events data packets are used to provide a realtime stream of updates to Protect. It differs from the system events API in that the system events API
- * appears to be shared across other applications (Network, Access, etc.) while the updates events API appears to only be utilized by Protect and not shared by other
- * applications, although the protocol is shared.
+ * UniFi OS update events data packets are used to provide a realtime stream of updates to Protect. It differs from the system events API in that the system
+ * events API appears to be shared across other applications (Network, Access, etc.) while the updates events API appears to only be utilized by Protect and not
+ * shared by other applications, although the protocol is shared.
  *
- * So how does it all work? Cameras continuously stream updates to the UniFi Protect controller containing things like camera health, statistics, and, crucially for us,
- * events such as motion and doorbell ring. A complete update packet is composed of four frames:
+ * So how does it all work? Cameras continuously stream updates to the UniFi Protect controller containing things like camera health, statistics, and, crucially
+ * for us, events such as motion and doorbell ring. A complete update packet is composed of four frames:
  *
  * ```
  * ----------------
@@ -37,8 +37,8 @@
  * | modelKey    | The device model category that we're updating.                                   |
  * | newUpdateId | A new UUID generated on a per-update basis. This can be safely ignored it seems. |
  *
- * The final part of the update packet is the data frame. The data frame can be three different types of data - although in practice, I've only seen JSONs come across.
- * Those types are:
+ * The final part of the update packet is the data frame. The data frame can be three different types of data - although in practice, I've only seen JSONs come
+ * across. Those types are:
  *
  * | Payload Type |                                                 Description                                                |
  * |--------------|------------------------------------------------------------------------------------------------------------|
@@ -48,21 +48,21 @@
  *
  * Some tips:
  *
- * - `update` actions are always tied to any valid modelKey that exists in the bootstrap JSON. The exception is `event` which is tied to the Protect events history list
- *   that it maintains. The supported modelKeys from the bootstrap JSON are: `bridge`, `camera`, `chime`, `group`, `light`, `liveview`, `nvr`, `sensor`, `user`, and
- *   `viewer`.
+ * - `update` actions are always tied to any valid modelKey that exists in the bootstrap JSON. The exception is `event` which is tied to the Protect events
+ *   history list that it maintains. The supported modelKeys from the bootstrap JSON are: `bridge`, `camera`, `chime`, `group`, `light`, `liveview`, `nvr`,
+ *   `sensor`, `user`, and `viewer`.
  *
- * - `add` actions are always tied to the `event` modelKey and indicate the beginning of an event item in the Protect events list. A subsequent `update` action is sent
- *   signaling the end of the event capture, and its confidence score for motion detection.
+ * - `add` actions are always tied to the `event` modelKey and indicate the beginning of an event item in the Protect events list. A subsequent `update` action
+ *   is sent signaling the end of the event capture, and its confidence score for motion detection.
  *
- * - The above is NOT the same thing as motion detection. If you want to detect motion, you should watch the `update` action for `camera` modelKeys, and look for a JSON
- *   that updates lastMotion. For doorbell rings, lastRing. The Protect events list is useful for the Protect app, but it's of limited utility to HomeKit, and it's slow
- *   relative to just looking for the lastMotion update. If you want true realtime updates, you want to look at the `update` action.
+ * - The above is NOT the same thing as motion detection. If you want to detect motion, you should watch the `update` action for `camera` modelKeys, and look
+ *   for a JSON that updates lastMotion. For doorbell rings, lastRing. The Protect events list is useful for the Protect app, but it's of limited utility to
+ *   HomeKit, and it's slow relative to just looking for the lastMotion update. If you want true realtime updates, you want to look at the `update` action.
  *
  * - JSONs are only payload type that seems to be sent, although the protocol is designed to accept all three.
  *
- * - With the exception of update actions with a modelKey of event, JSONs are always a subset of the bootstrap JSON, indexed off of modelKey. So for a modelKey of camera,
- *   the data payload is always a subset of {@link ProtectTypes.ProtectCameraConfigInterface | ProtectCameraConfigInterface}.
+ * - With the exception of update actions with a modelKey of event, JSONs are always a subset of the bootstrap JSON, indexed off of modelKey. So for a modelKey
+ *   of camera, the data payload is always a subset of {@link ProtectTypes.ProtectCameraConfigInterface | ProtectCameraConfigInterface}.
  *
  * @module ProtectEvents
  */
@@ -117,9 +117,9 @@ enum ProtectEventPacketHeader {
 /**
  * UniFi Protect event packet.
  *
- * @remarks A UniFi Protect event packet represents a realtime event update from a UniFi Protect controller. There are two components to each packet, a `header` and
- *   a `payload`. The `header` contains information about which Protect device and what action category it belongs to. The `payload` contains the detailed information
- *   related to the device and action specified in the header.
+ * @remarks A UniFi Protect event packet represents a realtime event update from a UniFi Protect controller. There are two components to each packet, a `header`
+ *   and a `payload`. The `header` contains information about which Protect device and what action category it belongs to. The `payload` contains the detailed
+ *   information related to the device and action specified in the header.
  */
 export interface ProtectEventPacket {
 
@@ -130,10 +130,10 @@ export interface ProtectEventPacket {
 /**
  * UniFi Protect event header.
  *
- * @remarks A UniFi Protect event packet represents a realtime event update from a UniFi Protect controller. There are two components to each packet, a `header` and
- *   a `payload`. The `header` contains information about which Protect device and what action category it belongs to and can contain arbitrary information, though has
- *   a few properties that are always present (`action`, `id`, `modelKey`, and `newUpdateId`). The `payload` contains the detailed information related to the device and
- *   action specified in the header.
+ * @remarks A UniFi Protect event packet represents a realtime event update from a UniFi Protect controller. There are two components to each packet, a `header`
+ *   and a `payload`. The `header` contains information about which Protect device and what action category it belongs to and can contain arbitrary information,
+ *   though has a few properties that are always present (`action`, `id`, `modelKey`, and `newUpdateId`). The `payload` contains the detailed information
+ *   related to the device and action specified in the header.
  */
 export interface ProtectEventHeader {
 
@@ -153,9 +153,9 @@ export interface ProtectEventHeader {
  * @returns Promise resolving to a decoded event packet, or `null` if decoding fails.
  *
  * @remarks A UniFi Protect event packet is an encoded representation of state updates that occur in a UniFi Protect controller. This utility function takes an
- * encoded packet as an input, and decodes it into an event header and payload that can be acted upon. An example of its use is in {@link ProtectApi} where, once
- * successfully logged into the Protect controller, events are generated automatically and can be accessed by listening to `message` events emitted by
- * {@link ProtectApi}.
+ *   encoded packet as an input, and decodes it into an event header and payload that can be acted upon. An example of its use is in {@link ProtectApi} where,
+ *   once successfully logged into the Protect controller, events are generated automatically and can be accessed by listening to `message` events emitted by
+ *   {@link ProtectApi}.
  */
 export async function decodePacket(log: ProtectLogging, packet: Buffer): Promise<Nullable<ProtectEventPacket>> {
 
@@ -164,8 +164,8 @@ export async function decodePacket(log: ProtectLogging, packet: Buffer): Promise
 
   try {
 
-    // The payload size begins at byte offset 4 as a big-endian 32-bit integer. When you add the payload size to our header frame size, you get the location of the
-    // data header frame.
+    // The payload size begins at byte offset 4 as a big-endian 32-bit integer. When you add the payload size to our header frame size, you get the location of
+    // the data header frame.
     dataOffset = packet.readUInt32BE(ProtectEventPacketHeader.PAYLOAD_SIZE) + EVENT_PACKET_HEADER_SIZE;
 
     // Validate our packet size, just in case we have more or less data than we expect. If we do, we're done for now.
@@ -218,7 +218,8 @@ async function decodeFrame(log: ProtectLogging, packet: Buffer, packetType: Prot
   // Read the payload format.
   const payloadFormat = packet.readUInt8(ProtectEventPacketHeader.PAYLOAD_FORMAT);
 
-  // Decompress the payload if the deflated flag is set, using async inflate to avoid blocking the event loop. For uncompressed payloads, we just slice past the header.
+  // Decompress the payload if the deflated flag is set, using async inflate to avoid blocking the event loop. For uncompressed payloads, we just slice past the
+  // header.
   const payload = packet.readUInt8(ProtectEventPacketHeader.DEFLATED) ?
     await inflateAsync(packet.subarray(EVENT_PACKET_HEADER_SIZE)) : packet.subarray(EVENT_PACKET_HEADER_SIZE);
 

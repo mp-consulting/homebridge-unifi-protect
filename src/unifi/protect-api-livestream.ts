@@ -45,7 +45,8 @@ import events, { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import util from 'node:util';
 
-// Livestream heartbeat timeout, in milliseconds. If no data is received within this interval, the livestream is considered unresponsive and the connection is closed.
+// Livestream heartbeat timeout, in milliseconds. If no data is received within this interval, the livestream is considered unresponsive and the connection is
+// closed.
 const PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT = 10000;
 
 // A complete description of the UniFi Protect livestream API websocket API.
@@ -76,8 +77,8 @@ const EMPTY_BUFFER = Buffer.alloc(0);
  * @property lens             - Optionally specify alternate cameras on a Protect device, such as a package camera.
  * @property segmentLength    - Optionally specify the segment length, in milliseconds, of each fMP4 segment. Defaults to 100ms.
  * @property requestId        - Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes.
- * @property useStream        - If `true`, a Node.js Readable stream interface will be created for consuming raw fMP4 segments instead of using EventEmitter events.
- *                              Defaults to false.
+ * @property useStream        - If `true`, a Node.js Readable stream interface will be created for consuming raw fMP4 segments instead of using EventEmitter
+ *                              events. Defaults to false.
  */
 export interface LivestreamOptions {
 
@@ -99,27 +100,28 @@ export interface LivestreamOptions {
  *
  * 3. Start a livestream using {@link start}, stop it with {@link stop}, and listen for events.
  *
- * 4. Listen for `message` events emitted by {@link ProtectLivestream} which provides Buffers containing the raw fMP4 segment data as it's produced by Protect. You can
- *    alternatively listen individually for the initialization segment or regular fMP4 segments if you'd like to distinguish between the two types of segments.
+ * 4. Listen for `message` events emitted by {@link ProtectLivestream} which provides Buffers containing the raw fMP4 segment data as it's produced by Protect.
+ *    You can alternatively listen individually for the initialization segment or regular fMP4 segments if you'd like to distinguish between the two types of
+ *    segments.
  *
  * Those are the basics that gets us up and running.
  *
- * @event close       - Emitted when the livestream WebSocket connection has been closed. This event fires after cleanup is complete and the connection is fully
- *                      terminated.
- * @event codec       - Emitted when codec information is received from the controller. The codec string is passed as an argument in the format "codec,container"
- *                      (e.g., "hev1.1.6.L150,mp4a.40.2"). Only emitted when not using stream mode.
- * @event initsegment - Emitted when an fMP4 initialization segment (FTYP and MOOV boxes) is received. The complete initialization segment Buffer is passed as an
- *                      argument. Only emitted when not using stream mode.
- * @event mdat        - Emitted when an MDAT box (media data) has been received as part of a segment. The MDAT Buffer is passed as an argument. Only emitted when not
- *                      using stream mode.
- * @event message     - Emitted when any complete fMP4 segment is received, whether initialization or regular segment. The complete segment Buffer is passed as an
- *                      argument. Only emitted when not using stream mode.
- * @event moof        - Emitted when a MOOF box (movie fragment metadata) has been received as part of a segment. The MOOF Buffer is passed as an argument. Only emitted
+ * @event close       - Emitted when the livestream WebSocket connection has been closed. This event fires after cleanup is complete and the connection is
+ *                      fully terminated.
+ * @event codec       - Emitted when codec information is received from the controller. The codec string is passed as an argument in the format
+ *                      "codec,container" (e.g., "hev1.1.6.L150,mp4a.40.2"). Only emitted when not using stream mode.
+ * @event initsegment - Emitted when an fMP4 initialization segment (FTYP and MOOV boxes) is received. The complete initialization segment Buffer is passed as
+ *                      an argument. Only emitted when not using stream mode.
+ * @event mdat        - Emitted when an MDAT box (media data) has been received as part of a segment. The MDAT Buffer is passed as an argument. Only emitted
  *                      when not using stream mode.
- * @event segment     - Emitted when a non-initialization fMP4 segment (MOOF/MDAT pair) is fully assembled. The complete segment Buffer is passed as an argument. Only
- *                      emitted when not using stream mode.
- * @event timestamps  - Emitted when decode timestamp information is received from the controller. An array of numbers containing the decode timestamps of frames in the
- *                      next segment is passed as an argument, mirroring the tfdt box contents.
+ * @event message     - Emitted when any complete fMP4 segment is received, whether initialization or regular segment. The complete segment Buffer is passed
+ *                      as an argument. Only emitted when not using stream mode.
+ * @event moof        - Emitted when a MOOF box (movie fragment metadata) has been received as part of a segment. The MOOF Buffer is passed as an argument.
+ *                      Only emitted when not using stream mode.
+ * @event segment     - Emitted when a non-initialization fMP4 segment (MOOF/MDAT pair) is fully assembled. The complete segment Buffer is passed as an
+ *                      argument. Only emitted when not using stream mode.
+ * @event timestamps  - Emitted when decode timestamp information is received from the controller. An array of numbers containing the decode timestamps of
+ *                      frames in the next segment is passed as an argument, mirroring the tfdt box contents.
  */
 export class ProtectLivestream extends EventEmitter {
 
@@ -168,17 +170,17 @@ export class ProtectLivestream extends EventEmitter {
    * @event segment     - Emitted with each complete non-initialization segment Buffer containing MOOF/MDAT pairs (stream mode disabled only).
    * @event timestamps  - Emitted with decode timestamp arrays when emitTimestamps is enabled in options.
    *
-   * @remarks Once a livestream session has started, the following events can be listened for (unless you've specified `useStream` in `options`, in which case only the
-   *          `close` event is available):
+   * @remarks Once a livestream session has started, the following events can be listened for (unless you've specified `useStream` in `options`, in which case
+   *          only the `close` event is available):
    *
-   * | Event         | Description                                                                                                                                  |
-   * |---------------|----------------------------------------------------------------------------------------------------------------------------------------------|
-   * | `close`       | Livestream has been closed.                                                                                                                  |
-   * | `codec`       | The codec and container format in use in the livestream. The codec information will be passed as an argument to any listeners.               |
-   * | `initsegment` | An fMP4 initialization segment has been received. The segment will be passed as an argument to any listeners.                                |
-   * | `message`     | An fMP4 segment has been received. No distinction is made between segment types. The segment will be passed as an argument to any listeners. |
-   * | `segment`     | A non-initialization fMP4 segment has been received. The segment will be passed as an argument to any listeners.                             |
-   * | `timestamps`  | An array of numbers containing the decode timestamps of the frames in the next segment. It mirrors what is provided in the `tfdt` box.       |
+   * | Event         | Description                                                                                                                     |
+   * |---------------|---------------------------------------------------------------------------------------------------------------------------------|
+   * | `close`       | Livestream has been closed.                                                                                                       |
+   * | `codec`       | The codec and container format in use in the livestream. The codec information will be passed as an argument to any listeners.   |
+   * | `initsegment` | An fMP4 initialization segment has been received. The segment will be passed as an argument to any listeners.                    |
+   * | `message`     | An fMP4 segment has been received. No distinction is made between segment types. The segment will be passed to any listeners.    |
+   * | `segment`     | A non-initialization fMP4 segment has been received. The segment will be passed as an argument to any listeners.                 |
+   * | `timestamps`  | An array of numbers containing the decode timestamps of the frames in the next segment. It mirrors the `tfdt` box contents.      |
    */
   public async start(cameraId: string, channel: number, options: Partial<LivestreamOptions> = {}): Promise<boolean> {
 
@@ -192,8 +194,8 @@ export class ProtectLivestream extends EventEmitter {
     // Stop any existing stream.
     this.stop();
 
-    // Create a fresh abort controller for this session. Every resource tied to the session's lifetime receives this signal...when stop() aborts it, all listeners,
-    // promises, and event registrations are cleaned up automatically.
+    // Create a fresh abort controller for this session. Every resource tied to the session's lifetime receives this signal...when stop() aborts it, all
+    // listeners, promises, and event registrations are cleaned up automatically.
     this.sessionAbort = new AbortController();
 
     // Clear out the initialization segment and any cached promise from a prior session.
@@ -249,18 +251,19 @@ export class ProtectLivestream extends EventEmitter {
 
     const logError = (message: string, ...parameters: unknown[]): void => this.log.error(options.requestId + ': ' + message, ...parameters);
 
-    // To ensure there are minimal performance implications to the Protect NVR, enforce a 100ms floor for segment length. Protect happens to default to a 100ms segment
-    // length as well, so we do too.
+    // To ensure there are minimal performance implications to the Protect NVR, enforce a 100ms floor for segment length. Protect happens to default to a 100ms
+    // segment length as well, so we do too.
     if(options.segmentLength < 100) {
 
       options.segmentLength = 100;
     }
 
-    // Parameters that can be set for the livestream. We allow the modification of a useful subset of these, though not all of them, in order to simplify the API
-    // experience and ensure things always work.
+    // Parameters that can be set for the livestream. We allow the modification of a useful subset of these, though not all of them, in order to simplify the
+    // API experience and ensure things always work.
     //
-    // allowPartialGOP:          Allow partial groups of pictures. Protect will start a fragment even if it doesn't begin on a keyframe. This reduces end-to-end latency
-    //                           at the cost of potentially cutting a GOP in half (i.e. you may see inter-frame artifacts at the very start of some segments).
+    // allowPartialGOP:          Allow partial groups of pictures. Protect will start a fragment even if it doesn't begin on a keyframe. This reduces end-to-end
+    //                           latency at the cost of potentially cutting a GOP in half (i.e. you may see inter-frame artifacts at the very start of some
+    //                           segments).
     // camera:                   The camera ID of the camera you are trying to livestream.
     // channel:                  The camera channel to use for this livestream.
     // extendedVideoMetadata:    Provide extended metadata in the MOOV box when possible.
@@ -318,8 +321,9 @@ export class ProtectLivestream extends EventEmitter {
 
         this.lastMessage = Date.now();
 
-        // Heartbeat the controller. We need this because if we don't heartbeat the controller, it can sometimes just decide not to give us a livestream to work with,
-        // or lockup due to regressions in the controller firmware. This ensures we can never hang waiting on data from the API, especially in a livestream scenario.
+        // Heartbeat the controller. We need this because if we don't heartbeat the controller, it can sometimes just decide not to give us a livestream to work
+        // with, or lockup due to regressions in the controller firmware. This ensures we can never hang waiting on data from the API, especially in a
+        // livestream scenario.
         this.heartbeat = setInterval(() => {
 
           if((Date.now() - this.lastMessage) > PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT) {
@@ -387,8 +391,8 @@ export class ProtectLivestream extends EventEmitter {
       return;
     }
 
-    // Track the segment under construction. We collect chunks in arrays and perform a single Buffer.concat at segment end to avoid repeated allocations and copies
-    // during accumulation.
+    // Track the segment under construction. We collect chunks in arrays and perform a single Buffer.concat at segment end to avoid repeated allocations and
+    // copies during accumulation.
     let currentSegment: { audio: Buffer[], mdat: Buffer[], moof: Buffer[], video: Buffer[] } = {
 
       audio: [],
@@ -398,10 +402,10 @@ export class ProtectLivestream extends EventEmitter {
     };
 
     // Keep any tail bytes that didn't form a full packet yet.
-    let packetRemaining = EMPTY_BUFFER;
+    let packetRemaining: Buffer = EMPTY_BUFFER;
 
-    // Process data coming in from the websocket. Our WebSocket client delivers binary frames as Buffers and text frames as strings, so unlike the original undici-based
-    // implementation there's no asynchronous Blob conversion needed here. The listeners registered here are removed when stop() is called.
+    // Process data coming in from the websocket. Our WebSocket client delivers binary frames as Buffers and text frames as strings, so unlike the original
+    // undici-based implementation there's no asynchronous Blob conversion needed here. The listeners registered here are removed when stop() is called.
     this.ws.on('message', (data: Buffer | string) => {
 
       // Update our heartbeat.
@@ -424,8 +428,8 @@ export class ProtectLivestream extends EventEmitter {
 
       for(;;) {
 
-        // If we have less than 4 bytes remaining, it's an incomplete packet and we don't have enough information to decode it without the packet header. We save it to
-        // prepend to the next packet that comes across.
+        // If we have less than 4 bytes remaining, it's an incomplete packet and we don't have enough information to decode it without the packet header. We
+        // save it to prepend to the next packet that comes across.
         if((packet.length - offset) < 4) {
 
           packetRemaining = packet.subarray(offset);
@@ -456,7 +460,6 @@ export class ProtectLivestream extends EventEmitter {
         }
 
         // We have a full segment. Let's slice it out, process it, and advance our offset.
-        let completeSegment: Nullable<Buffer> = null;
         const dataStart = offset + 4;
         const dataEnd = dataStart + length;
         const data = packet.subarray(dataStart, dataEnd);
@@ -479,8 +482,7 @@ export class ProtectLivestream extends EventEmitter {
             const mdat = Buffer.concat(currentSegment.mdat);
             const video = Buffer.concat(currentSegment.video);
             const audio = Buffer.concat(currentSegment.audio);
-
-            completeSegment = Buffer.concat([ moof, mdat, video, audio ]);
+            const completeSegment = Buffer.concat([ moof, mdat, video, audio ]);
 
             if(this._stream) {
 
@@ -588,8 +590,8 @@ export class ProtectLivestream extends EventEmitter {
   /**
    * Retrieve the initialization segment that must be at the start of every fMP4 stream.
    *
-   * @remarks If the stream is stopped before the initialization segment is received, the returned promise rejects with an AbortError. Callers should handle this
-   *   rejection or wrap the call with a timeout.
+   * @remarks If the stream is stopped before the initialization segment is received, the returned promise rejects with an AbortError. Callers should handle
+   *   this rejection or wrap the call with a timeout.
    *
    * @returns Returns a promise that resolves once the initialization segment has been seen, or returning it immediately if it already has been.
    */
@@ -605,8 +607,8 @@ export class ProtectLivestream extends EventEmitter {
     return this.initSegmentPromise ??= this.awaitInitSegment();
   }
 
-  // Wait for the initialization segment event, gated by the session's abort signal. The init segment is guaranteed to be non-null when the event fires because the
-  // event handler in processLivestream sets _initSegment before emitting.
+  // Wait for the initialization segment event, gated by the session's abort signal. The init segment is guaranteed to be non-null when the event fires because
+  // the event handler in processLivestream sets _initSegment before emitting.
   private async awaitInitSegment(): Promise<Buffer> {
 
     // If there's no active session, reject immediately. Calling getInitSegment() on a stopped stream has no session to produce the event and no abort signal to
