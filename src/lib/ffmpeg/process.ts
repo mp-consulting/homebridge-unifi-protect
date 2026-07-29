@@ -7,11 +7,11 @@
 /**
  * FFmpeg process management and capability introspection.
  *
- * This module defines the `FfmpegProcess` class, which abstracts the spawning, monitoring, and logging of FFmpeg subprocesses. It manages process state, handles
- * command-line argument composition, processes standard streams (stdin, stdout, stderr), and robustly reports process errors and exit conditions.
+ * This module defines the `FfmpegProcess` class, which abstracts the spawning, monitoring, and logging of FFmpeg subprocesses. It manages process state,
+ * handles command-line argument composition, processes standard streams (stdin, stdout, stderr), and robustly reports process errors and exit conditions.
  *
- * Designed for use in Homebridge plugins, this module enables safe and flexible execution of FFmpeg commands, making it easier to integrate video/audio processing
- * pipelines with realtime control and diagnostics.
+ * Designed for use in Homebridge plugins, this module enables safe and flexible execution of FFmpeg commands, making it easier to integrate video/audio
+ * processing pipelines with realtime control and diagnostics.
  *
  * Key features:
  *
@@ -20,8 +20,8 @@
  * - Access to process I/O streams for data injection and consumption.
  * - Flexible callback and event-based architecture for streaming scenarios.
  *
- * Intended for developers needing direct, reliable control over FFmpeg process lifecycles with detailed runtime insights, especially in plugin or media automation
- * contexts.
+ * Intended for developers needing direct, reliable control over FFmpeg process lifecycles with detailed runtime insights, especially in plugin or media
+ * automation contexts.
  *
  * @module
  */
@@ -41,8 +41,9 @@ const NON_PRINTABLE_CHARS = /\p{C}+/gu;
 /**
  * Base class providing FFmpeg process management and capability introspection.
  *
- * This class encapsulates spawning, managing, and logging of FFmpeg processes, as well as handling process I/O and errors. It is designed as a reusable foundation for
- * advanced FFmpeg process control in Homebridge plugins or similar environments. Originally inspired by the Homebridge and homebridge-camera-ffmpeg source code.
+ * This class encapsulates spawning, managing, and logging of FFmpeg processes, as well as handling process I/O and errors. It is designed as a reusable
+ * foundation for advanced FFmpeg process control in Homebridge plugins or similar environments. Originally inspired by the Homebridge and
+ * homebridge-camera-ffmpeg source code.
  *
  * @example
  *
@@ -259,9 +260,8 @@ export class FfmpegProcess extends EventEmitter {
     // Handle logging output that gets sent to stderr.
     this.process?.stderr.on('data', dataListener = (data: Buffer): void => {
 
-      // Inform us when we start receiving data back from FFmpeg. We do this here because it's the only
-      // truly reliable place we can check on FFmpeg. stdin and stdout may not be used at all, depending
-      // on the way FFmpeg is called, but stderr will always be there.
+      // Inform us when we start receiving data back from FFmpeg. We do this here because it's the only truly reliable place we can check on FFmpeg. stdin and
+      // stdout may not be used at all, depending on the way FFmpeg is called, but stderr will always be there.
       if(!this._isStarted) {
 
         this._isStarted = true;

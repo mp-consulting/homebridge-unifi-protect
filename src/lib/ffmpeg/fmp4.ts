@@ -7,9 +7,9 @@
 /**
  * ISO BMFF (fMP4) box parsing utilities for working with fragmented MP4 data.
  *
- * This module provides lightweight, Buffer-based utilities for inspecting ISO Base Media File Format (ISO BMFF) structures commonly found in fragmented MP4 (fMP4)
- * streams. It enables locating specific box types, splitting fragments into their moof/mdat components, detecting keyframe (sync sample) segments by parsing the TRUN
- * sample flags, and identifying audio track presence in initialization segments.
+ * This module provides lightweight, Buffer-based utilities for inspecting ISO Base Media File Format (ISO BMFF) structures commonly found in fragmented MP4
+ * (fMP4) streams. It enables locating specific box types, splitting fragments into their moof/mdat components, detecting keyframe (sync sample) segments by
+ * parsing the TRUN sample flags, and identifying audio track presence in initialization segments.
  *
  * These utilities operate on complete Buffers and are independent of FFmpeg processes or streaming pipelines.
  *
@@ -76,7 +76,8 @@ export function findBox(buffer: Buffer, type: string, start = 0, end?: number): 
 
   const limit = end ?? buffer.length;
 
-  // Encode the target type as a 32-bit integer for comparison, avoiding string allocation on every box visited. Box types in ISO BMFF are always exactly 4 ASCII bytes.
+  // Encode the target type as a 32-bit integer for comparison, avoiding string allocation on every box visited. Box types in ISO BMFF are always exactly 4
+  // ASCII bytes.
   if(type.length !== 4) {
 
     return null;
@@ -91,8 +92,8 @@ export function findBox(buffer: Buffer, type: string, start = 0, end?: number): 
 
     const size = buffer.readUInt32BE(offset);
 
-    // A valid box must be at least the header size and must not extend beyond the search range. Size values below the header size indicate corruption, misalignment,
-    // extended-size boxes (size === 1), or open-ended boxes (size === 0) - none of which are supported in this context.
+    // A valid box must be at least the header size and must not extend beyond the search range. Size values below the header size indicate corruption,
+    // misalignment, extended-size boxes (size === 1), or open-ended boxes (size === 0) - none of which are supported in this context.
     if((size < BOX_HEADER_SIZE) || (size > (limit - offset))) {
 
       return null;
@@ -114,9 +115,9 @@ export function findBox(buffer: Buffer, type: string, start = 0, end?: number): 
 /**
  * Determines whether an fMP4 segment contains a keyframe (sync sample) by parsing the TRUN sample flags.
  *
- * Traverses the box hierarchy `moof -> traf -> trun` and inspects the sample flags to determine if the first sample is a sync sample (keyframe/IDR frame). Checks
- * `first_sample_flags` first (the common case for fragments generated with `frag_keyframe`), then falls back to per-sample flags if available. Returns `false` if the
- * box structure cannot be parsed or if the flags indicate a non-sync sample.
+ * Traverses the box hierarchy `moof -> traf -> trun` and inspects the sample flags to determine if the first sample is a sync sample (keyframe/IDR frame).
+ * Checks `first_sample_flags` first (the common case for fragments generated with `frag_keyframe`), then falls back to per-sample flags if available. Returns
+ * `false` if the box structure cannot be parsed or if the flags indicate a non-sync sample.
  *
  * @param segment      - A buffer containing a complete fMP4 segment (typically a moof+mdat pair).
  *
@@ -150,8 +151,8 @@ export function isKeyframe(segment: Buffer): boolean {
     return false;
   }
 
-  // The trun is a fullbox: after the standard box header come 4 bytes of version/flags and 4 bytes of sample_count. We need the full header to read the flags and
-  // determine which optional fields follow.
+  // The trun is a fullbox: after the standard box header come 4 bytes of version/flags and 4 bytes of sample_count. We need the full header to read the flags
+  // and determine which optional fields follow.
   if(trun.size < TRUN_HEADER_SIZE) {
 
     return false;
@@ -169,8 +170,8 @@ export function isKeyframe(segment: Buffer): boolean {
     pos += 4;
   }
 
-  // Check first_sample_flags if present. This is the most common path for fMP4 fragments generated with the frag_keyframe movflag, where each fragment starts at a
-  // keyframe and the first sample's flags are stored separately from the per-sample entries.
+  // Check first_sample_flags if present. This is the most common path for fMP4 fragments generated with the frag_keyframe movflag, where each fragment starts
+  // at a keyframe and the first sample's flags are stored separately from the per-sample entries.
   if(flags & TRUN_FLAG_FIRST_SAMPLE_FLAGS) {
 
     if((pos + 4) > (trun.offset + trun.size)) {
@@ -181,8 +182,8 @@ export function isKeyframe(segment: Buffer): boolean {
     return (segment.readUInt32BE(pos) & SAMPLE_FLAG_NON_SYNC) === 0;
   }
 
-  // Fall back to per-sample flags. The per-sample entry fields appear in a fixed order: duration, size, flags, composition time offset. We skip duration and size to
-  // reach the first sample's flags field.
+  // Fall back to per-sample flags. The per-sample entry fields appear in a fixed order: duration, size, flags, composition time offset. We skip duration and
+  // size to reach the first sample's flags field.
   if(flags & TRUN_FLAG_SAMPLE_FLAGS) {
 
     if(flags & TRUN_FLAG_SAMPLE_DURATION) {
@@ -210,8 +211,8 @@ export function isKeyframe(segment: Buffer): boolean {
 /**
  * Determines whether an fMP4 initialization segment contains an audio track by inspecting the handler type in each track's media handler box.
  *
- * Traverses the box hierarchy `moov -> trak -> mdia -> hdlr` for every track in the init segment and checks the handler_type field for "soun" (0x736F756E). This is the
- * standard ISO BMFF mechanism for identifying track media types - "soun" for audio, "vide" for video, "subt" for subtitles, etc.
+ * Traverses the box hierarchy `moov -> trak -> mdia -> hdlr` for every track in the init segment and checks the handler_type field for "soun" (0x736F756E).
+ * This is the standard ISO BMFF mechanism for identifying track media types - "soun" for audio, "vide" for video, "subt" for subtitles, etc.
  *
  * @param initSegment   - A buffer containing a complete fMP4 initialization segment (typically ftyp + moov).
  *
@@ -232,8 +233,8 @@ export function hasAudioTrack(initSegment: Buffer): boolean {
   const moovStart = moov.offset + BOX_HEADER_SIZE;
   const moovEnd = moov.offset + moov.size;
 
-  // Walk each trak box inside the moov, advancing past each one we find. Once we've passed the last trak, findBox runs out of range and returns null, which is how we
-  // know we're done.
+  // Walk each trak box inside the moov, advancing past each one we find. Once we've passed the last trak, findBox runs out of range and returns null, which is
+  // how we know we're done.
   let trakStart = moovStart;
 
   for(;;) {
@@ -253,8 +254,8 @@ export function hasAudioTrack(initSegment: Buffer): boolean {
       // Locate the hdlr box inside the mdia.
       const hdlr = findBox(initSegment, 'hdlr', mdia.offset + BOX_HEADER_SIZE, mdia.offset + mdia.size);
 
-      // Read the handler_type field. In a hdlr fullbox, the layout after the standard box header is: version/flags (4 bytes) + pre_defined (4 bytes) + handler_type
-      // (4 bytes). We check that the box is large enough to contain the field before reading.
+      // Read the handler_type field. In a hdlr fullbox, the layout after the standard box header is: version/flags (4 bytes) + pre_defined (4 bytes) +
+      // handler_type (4 bytes). We check that the box is large enough to contain the field before reading.
       if(hdlr && (hdlr.size >= (HDLR_TYPE_OFFSET + 4))) {
 
         if(initSegment.readUInt32BE(hdlr.offset + HDLR_TYPE_OFFSET) === HDLR_TYPE_SOUN) {
@@ -272,9 +273,9 @@ export function hasAudioTrack(initSegment: Buffer): boolean {
 /**
  * Splits an fMP4 fragment into its moof and mdat components.
  *
- * Locates the `mdat` box and returns everything before it as the moof portion (which includes the moof box and any preceding metadata boxes) and everything from the
- * mdat box to the end of the fragment as the mdat portion. The returned buffers are subarray views into the original buffer, so no data is copied. Returns `null` if
- * the mdat box cannot be found.
+ * Locates the `mdat` box and returns everything before it as the moof portion (which includes the moof box and any preceding metadata boxes) and everything
+ * from the mdat box to the end of the fragment as the mdat portion. The returned buffers are subarray views into the original buffer, so no data is copied.
+ * Returns `null` if the mdat box cannot be found.
  *
  * @param fragment     - A buffer containing a complete fMP4 fragment.
  *

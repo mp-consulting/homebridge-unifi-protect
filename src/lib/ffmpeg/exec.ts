@@ -7,11 +7,12 @@
 /**
  * Executes arbitrary FFmpeg commands and returns the results.
  *
- * This module exposes the `FfmpegExec` class, which extends the core process handling of FFmpeg to support running custom command-line operations. It enables developers
- * to run FFmpeg commands from Node.js, capture both standard output and error streams, handle process exit codes, and optionally supply input via stdin.
+ * This module exposes the `FfmpegExec` class, which extends the core process handling of FFmpeg to support running custom command-line operations. It enables
+ * developers to run FFmpeg commands from Node.js, capture both standard output and error streams, handle process exit codes, and optionally supply input via
+ * stdin.
  *
- * Intended for plugin developers and advanced users, this module is ideal for scenarios where you need direct control over FFmpeg execution—such as probing media,
- * transcoding, or automation tasks—while still benefiting from structured result handling and robust error logging.
+ * Intended for plugin developers and advanced users, this module is ideal for scenarios where you need direct control over FFmpeg execution—such as probing
+ * media, transcoding, or automation tasks—while still benefiting from structured result handling and robust error logging.
  *
  * Key features:
  *
@@ -45,9 +46,9 @@ export interface ProcessResult {
 /**
  * Executes arbitrary FFmpeg commands and returns the results.
  *
- * This class extends `FfmpegProcess` to provide a simple interface for running FFmpeg with custom command-line arguments, capturing both standard output and standard
- * error, and returning process results in a structured format. Intended for plugin authors and advanced users who need to programmatically execute FFmpeg commands and
- * capture their results.
+ * This class extends `FfmpegProcess` to provide a simple interface for running FFmpeg with custom command-line arguments, capturing both standard output and
+ * standard error, and returning process results in a structured format. Intended for plugin authors and advanced users who need to programmatically execute
+ * FFmpeg commands and capture their results.
  *
  * @example
  *

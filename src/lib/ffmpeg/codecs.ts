@@ -9,10 +9,10 @@
  *
  * Utilities for dynamically probing FFmpeg capabilities on the host system, including codec and hardware acceleration support.
  *
- * This module provides classes and interfaces to detect which FFmpeg encoders, decoders, and hardware acceleration methods are available, as well as host platform
- * detection (such as macOS or Raspberry Pi specifics) that directly impact transcoding or livestreaming use cases. It enables advanced plugin development by allowing
- * dynamic adaptation to the host's video processing features, helping ensure compatibility and optimal performance when working with camera-related Homebridge plugins
- * that leverage FFmpeg.
+ * This module provides classes and interfaces to detect which FFmpeg encoders, decoders, and hardware acceleration methods are available, as well as host
+ * platform detection (such as macOS or Raspberry Pi specifics) that directly impact transcoding or livestreaming use cases. It enables advanced plugin
+ * development by allowing dynamic adaptation to the host's video processing features, helping ensure compatibility and optimal performance when working with
+ * camera-related Homebridge plugins that leverage FFmpeg.
  *
  * Key features include:
  *
@@ -61,8 +61,8 @@ export interface FOptions {
 /**
  * Probe FFmpeg capabilities and codecs on the host system.
  *
- * This class provides methods to check available FFmpeg decoders, encoders, and hardware acceleration methods, as well as to determine system-specific resources such as
- * GPU memory (on Raspberry Pi). Intended for plugin authors or advanced users needing to assess FFmpeg capabilities dynamically.
+ * This class provides methods to check available FFmpeg decoders, encoders, and hardware acceleration methods, as well as to determine system-specific
+ * resources such as GPU memory (on Raspberry Pi). Intended for plugin authors or advanced users needing to assess FFmpeg capabilities dynamically.
  *
  * @example
  *
@@ -337,9 +337,10 @@ export class FfmpegCodecs {
       return false;
     }
 
-    // Let's test to ensure that just because we have a codec or capability available to us, it doesn't necessarily mean that the user has the hardware capabilities
-    // needed to use it, resulting in an FFmpeg error. We catch that here and prevent those capabilities from being exposed unless both software and hardware capabilities
-    // enable it. This simple test, generates a one-second video that is processed by the requested codec. If it fails, we discard the codec.
+    // Let's test to ensure that just because we have a codec or capability available to us, it doesn't necessarily mean that the user has the hardware
+    // capabilities needed to use it, resulting in an FFmpeg error. We catch that here and prevent those capabilities from being exposed unless both software
+    // and hardware capabilities enable it. This simple test, generates a one-second video that is processed by the requested codec. If it fails, we discard the
+    // codec.
     for(const accel of this.ffmpegHwAccels) {
 
       if(!(await this.probeCmd(this.ffmpegExec, [
