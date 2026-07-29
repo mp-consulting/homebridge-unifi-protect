@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file. This projec
 ### Changed
 
 - **Zero runtime dependencies**: The plugin no longer depends on any external npm packages at runtime. The `unifi-protect` API client has been replaced by an in-repo implementation (`src/unifi/`) covering login, bootstrap, the realtime events WebSocket, and the livestream API. The `homebridge-plugin-utils` utilities — including the entire FFmpeg pipeline (codec probing, streaming/recording processes, RTP demuxing and port allocation, fMP4 parsing), the feature options engine, the MQTT client, and the HomeKit service helpers — are now implemented in-repo (`src/lib/`), together with dependency-free HTTP(S), WebSocket (RFC 6455), and MQTT 3.1.1 clients built exclusively on Node.js built-ins. `undici` and `@homebridge/plugin-ui-utils` have been removed on the same basis.
-- **BREAKING — FFmpeg is no longer bundled**: The `ffmpeg-for-homebridge` package has been removed. The plugin now uses the FFmpeg binary found in your `PATH` (or the one configured through the `videoProcessor` option). If you don't have FFmpeg installed, install it through your platform's package manager (e.g. `apt install ffmpeg`, `brew install ffmpeg`) or set `videoProcessor` to the full path of an FFmpeg binary.
+- **FFmpeg**: `ffmpeg-for-homebridge` is now an *optional* dependency, resolved dynamically at runtime. When it's installed (the default for npm installs), the bundled FFmpeg binary is used exactly as before — no change for existing users. When it's absent or its platform download failed, the plugin transparently falls back to the FFmpeg found in your `PATH`, and the `videoProcessor` option continues to override both.
 
 ## [1.1.2] - 2026-05-04
 

@@ -83,7 +83,6 @@
     "monitor:events": "npx tsx scripts/event-schema-monitor.ts"
   },
   "main": "dist/index.js",
-  "dependencies": {},
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@mp-consulting/homebridge-ui-kit": "^1.0.0",
@@ -101,5 +100,8 @@
   },
   "overrides": {
     "@types/readable-stream": "4.0.23"
+  },
+  "optionalDependencies": {
+    "ffmpeg-for-homebridge": "2.2.2"
   }
 }

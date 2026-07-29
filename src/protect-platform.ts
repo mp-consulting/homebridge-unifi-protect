@@ -9,7 +9,21 @@ import { type ProtectOptions, featureOptionCategories, featureOptions } from './
 import { APIEvent } from 'homebridge';
 import { PROTECT_MQTT_TOPIC } from './settings.js';
 import { ProtectNvr } from './protect-nvr.js';
+import { createRequire } from 'node:module';
 import util from 'node:util';
+
+// Resolve the FFmpeg binary provided by the optional ffmpeg-for-homebridge package, if it's installed. The plugin has no hard runtime dependencies - when the package
+// is unavailable (or its platform-specific download failed at install time and it exports nothing), we fall back to the system-installed FFmpeg instead.
+const bundledFfmpeg = ((): string | undefined => {
+
+  try {
+
+    return createRequire(import.meta.url)('ffmpeg-for-homebridge') as string | undefined;
+  } catch {
+
+    return undefined;
+  }
+})();
 
 export class ProtectPlatform implements DynamicPlatformPlugin {
 
@@ -41,8 +55,9 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       options: config?.options ?? [],
       ringDelay: config?.ringDelay ?? 0,
       verboseFfmpeg: config?.verboseFfmpeg === true,
-      // Use the user-configured FFmpeg binary if one's been set, falling back to the system-installed FFmpeg otherwise.
-      videoProcessor: config?.videoProcessor ?? 'ffmpeg',
+      // Use the user-configured FFmpeg binary if one's been set, then the bundled FFmpeg from the optional ffmpeg-for-homebridge package if it's installed, falling
+      // back to the system-installed FFmpeg otherwise.
+      videoProcessor: config?.videoProcessor ?? bundledFfmpeg ?? 'ffmpeg',
     };
 
     // Probe our FFmpeg capabilities. We always initialize this to ensure consistent state.
