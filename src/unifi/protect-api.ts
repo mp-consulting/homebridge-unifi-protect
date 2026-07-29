@@ -457,12 +457,9 @@ export class ProtectApi extends EventEmitter {
       // stale listeners from interfering with post-connection event handling.
       const connected = await new Promise<boolean>((resolve) => {
 
-        function onOpen(this: ProtectApi): void {
+        function onOpen(): void {
 
           ws.off('close', onClose);
-
-          // Make the WebSocket available.
-          this._eventsWs = ws;
           resolve(true);
         }
 
@@ -473,7 +470,7 @@ export class ProtectApi extends EventEmitter {
           resolve(false);
         }
 
-        ws.once('open', onOpen.bind(this));
+        ws.once('open', onOpen);
         ws.once('close', onClose);
       });
 
@@ -482,6 +479,9 @@ export class ProtectApi extends EventEmitter {
 
         return false;
       }
+
+      // Make the WebSocket available.
+      this._eventsWs = ws;
 
       // Cleanup after ourselves if our WebSocket closes for some reason.
       ws.once('close', () => {
