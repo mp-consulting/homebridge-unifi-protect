@@ -56,6 +56,7 @@ export interface ProtectNvrOptions {
   overrideAddress?: string;
   username: string;
   password: string;
+  verifyTls?: boolean;
 }
 
 // Normalize a MAC address for case- and separator-insensitive comparison (e.g. "f6:24:49:03:a5:b3" and "F6244903A5B3" compare equal).

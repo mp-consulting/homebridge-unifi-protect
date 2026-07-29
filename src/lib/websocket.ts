@@ -60,6 +60,7 @@ export class WebSocketClient extends EventEmitter {
   private fragmentOpcode: number;
   private fragmentSize: number;
   private maxPayload: number;
+  private request: Nullable<http.ClientRequest>;
   private socket: Nullable<net.Socket>;
 
   // Create a new WebSocket connection to a ws:// or wss:// URL and begin the opening handshake.
@@ -74,6 +75,7 @@ export class WebSocketClient extends EventEmitter {
     this.fragmentSize = 0;
     this.maxPayload = options.maxPayload ?? WS_DEFAULT_MAX_PAYLOAD;
     this.readyState = WebSocketClient.CONNECTING;
+    this.request = null;
     this.socket = null;
 
     this.connect(url, options);
@@ -106,7 +108,17 @@ export class WebSocketClient extends EventEmitter {
       timeout: WS_HANDSHAKE_TIMEOUT,
     });
 
+    this.request = req;
+
     req.on('upgrade', (res, socket, head) => {
+
+      // We've been closed while the handshake was in flight - discard the connection rather than resurrecting it.
+      if(this.readyState !== WebSocketClient.CONNECTING) {
+
+        socket.destroy();
+
+        return;
+      }
 
       // Validate the handshake per RFC 6455 - the server must echo back the hashed key.
       const expected = createHash('sha1').update(key + WS_GUID).digest('base64');
@@ -115,7 +127,7 @@ export class WebSocketClient extends EventEmitter {
 
         socket.destroy();
         this.readyState = WebSocketClient.CLOSED;
-        this.emit('error', new Error('Invalid WebSocket handshake response from the server.'));
+        this.emitError(new Error('Invalid WebSocket handshake response from the server.'));
         this.emit('close');
 
         return;
@@ -129,7 +141,7 @@ export class WebSocketClient extends EventEmitter {
 
       socket.on('data', (data: Buffer) => this.processData(data));
 
-      socket.on('error', (error: Error) => this.emit('error', error));
+      socket.on('error', (error: Error) => this.emitError(error));
 
       socket.on('close', () => {
 
@@ -156,7 +168,7 @@ export class WebSocketClient extends EventEmitter {
 
       // The server refused to upgrade the connection.
       this.readyState = WebSocketClient.CLOSED;
-      this.emit('error', new Error('WebSocket upgrade refused by the server: HTTP ' + res.statusCode + '.'));
+      this.emitError(new Error('WebSocket upgrade refused by the server: HTTP ' + res.statusCode + '.'));
       this.emit('close');
       req.destroy();
     });
@@ -172,11 +184,21 @@ export class WebSocketClient extends EventEmitter {
       }
 
       this.readyState = WebSocketClient.CLOSED;
-      this.emit('error', error);
+      this.emitError(error);
       this.emit('close');
     });
 
     req.end();
+  }
+
+  // Emit an error event, but only when someone is listening. EventEmitter throws on unhandled 'error' events, and a transport-level hiccup arriving after a
+  // consumer has already detached its listeners (e.g. during a shutdown race) must never crash the process.
+  private emitError(error: Error): void {
+
+    if(this.listenerCount('error')) {
+
+      this.emit('error', error);
+    }
   }
 
   // Process inbound data from the server, decoding complete WebSocket frames as they arrive.
@@ -223,7 +245,7 @@ export class WebSocketClient extends EventEmitter {
       // way, we're done. We account for any partially assembled fragmented message as well so fragmentation can't be used to sidestep the cap.
       if((payloadLength > this.maxPayload) || ((this.fragmentSize + payloadLength) > this.maxPayload)) {
 
-        this.emit('error', new Error('WebSocket message exceeds the maximum allowed size of ' + this.maxPayload + ' bytes.'));
+        this.emitError(new Error('WebSocket message exceeds the maximum allowed size of ' + this.maxPayload + ' bytes.'));
         this.terminate();
 
         return;
@@ -396,10 +418,12 @@ export class WebSocketClient extends EventEmitter {
       return;
     }
 
-    // The handshake hasn't completed yet - there's nothing to gracefully close.
+    // The handshake hasn't completed yet - abort the in-flight upgrade request so the connection can't complete and leak after we're closed.
     if(this.readyState === WebSocketClient.CONNECTING) {
 
       this.readyState = WebSocketClient.CLOSED;
+      this.request?.destroy();
+      this.emit('close');
 
       return;
     }
@@ -418,7 +442,16 @@ export class WebSocketClient extends EventEmitter {
   // Immediately terminate the connection.
   public terminate(): void {
 
+    const wasConnecting = this.readyState === WebSocketClient.CONNECTING;
+
     this.readyState = WebSocketClient.CLOSED;
+    this.request?.destroy();
     this.socket?.destroy();
+
+    // A socket that never existed can't emit the close event for us.
+    if(wasConnecting) {
+
+      this.emit('close');
+    }
   }
 }

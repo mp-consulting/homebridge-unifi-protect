@@ -81,8 +81,9 @@ export class ProtectNvr {
       warn: (message: string, ...parameters: unknown[]): void => this.platform.log.warn(util.format(message, ...parameters)),
     };
 
-    // Initialize our connection to the UniFi Protect API.
-    this.ufpApi = new ProtectApi(ufpLog);
+    // Initialize our connection to the UniFi Protect API. TLS certificate validation is off by default since UniFi controllers ship with self-signed
+    // certificates, but setups with proper certificates can opt in through the verifyTls controller option.
+    this.ufpApi = new ProtectApi(ufpLog, { verifyTls: this.config.verifyTls === true });
 
     // Configure our controller logging.
     this.log = {

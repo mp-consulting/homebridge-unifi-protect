@@ -33,6 +33,17 @@ jobs:
       - name: Test
         run: npm test
 
+  # The shared dependency-free library (src/lib) is deliberately duplicated between homebridge-unifi-access and homebridge-unifi-protect. Fail if the copies drift.
+  lib-sync:
+    name: Shared library sync check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compare src/lib against the sibling repository
+        run: ./scripts/check-lib-sync.sh
+
   # The plugin must remain fully functional without its optional dependencies - ffmpeg-for-homebridge is optional and the plugin falls back to the system FFmpeg.
   # We simulate its absence by removing it after install rather than using --omit=optional, which would also strip the dev toolchain's own optional native
   # bindings (e.g. rolldown's platform binary used by vitest).

@@ -130,6 +130,16 @@ interface InternalRetrieveOptions extends RetrieveOptions {
 }
 
 /**
+ * Options to tailor the behavior of the Protect API client.
+ *
+ * @property {boolean} [verifyTls=false] - Validate the controller's TLS certificate. Defaults to `false` since UniFi controllers use self-signed certificates.
+ */
+export interface ProtectApiOptions {
+
+  verifyTls?: boolean;
+}
+
+/**
  * This class provides an event-driven API to access the UniFi Protect API.
  *
  * ## Getting Started
@@ -177,6 +187,7 @@ export class ProtectApi extends EventEmitter {
 
   private _bootstrap: Nullable<ProtectNvrBootstrap>;
   private _eventsWs: Nullable<WebSocketClient>;
+  private _verifyTls: boolean;
   private agent: Nullable<https.Agent>;
   private apiErrorCount: number;
   private apiThrottleStart: number;
@@ -191,7 +202,9 @@ export class ProtectApi extends EventEmitter {
   /**
    * Create an instance of the UniFi Protect API.
    *
-   * @param log - Custom logging implementation.
+   * @param log     - Custom logging implementation.
+   * @param options - Options to tailor the API client's behavior. `verifyTls` enables strict TLS certificate validation of the controller - it defaults to
+   *                  `false` since UniFi controllers ship with self-signed certificates.
    *
    * @defaultValue Console logging to stdout/stderr
    *
@@ -200,10 +213,14 @@ export class ProtectApi extends EventEmitter {
    *
    * @category Constructor
    */
-  constructor(log?: ProtectLogging) {
+  constructor(log?: ProtectLogging, options: ProtectApiOptions = {}) {
 
     // Initialize our parent.
     super();
+
+    // UniFi controllers ship with self-signed certificates, so we skip TLS certificate validation by default. Setups with proper certificates can opt in to
+    // strict validation.
+    this._verifyTls = options.verifyTls ?? false;
 
     // If we didn't get passed a logging parameter, by default we log to the console.
     log ??= {
@@ -441,7 +458,7 @@ export class ProtectApi extends EventEmitter {
       // Let's open the WebSocket connection, passing our authentication cookie and explicitly allowing the self-signed TLS certificates that Protect
       // controllers ship with by default.
       const ws = new WebSocketClient('wss://' + this.nvrAddress + '/proxy/protect/ws/updates?' + params.toString(),
-        { headers: { Cookie: this.headers.cookie ?? '' }, rejectUnauthorized: false });
+        { headers: { Cookie: this.headers.cookie ?? '' }, rejectUnauthorized: this._verifyTls });
 
       // Handle any WebSocket errors. A single once handler covers both the connection phase and the post-connection lifetime...the first error on the WebSocket
       // triggers logging, closes the connection, and the close event handles cleanup.
@@ -915,7 +932,7 @@ export class ProtectApi extends EventEmitter {
       // Create a connection pool for our HTTP requests. We want to explicitly allow the self-signed SSL certificates that ship with Protect controllers, and
       // allow up to five connections at a time with keepalive enabled for TLS session reuse and connection efficiency. Robust retry handling for transient
       // failures is provided per-request by our transport layer in _retrieve.
-      this.agent = new https.Agent({ keepAlive: true, maxSockets: 5, rejectUnauthorized: false });
+      this.agent = new https.Agent({ keepAlive: true, maxSockets: 5, rejectUnauthorized: this._verifyTls });
     }
   }
 
@@ -1433,6 +1450,21 @@ export class ProtectApi extends EventEmitter {
   public get isThrottled(): boolean {
 
     return this._isThrottled;
+  }
+
+  /**
+   * Utility method that returns whether TLS certificate validation is enabled for connections to the Protect controller.
+   *
+   * @returns Returns `true` when the controller's TLS certificate is being validated, `false` otherwise.
+   *
+   * @remarks Configured at construction time through {@link ProtectApiOptions}. Consumers that open their own connections to the controller (e.g. the
+   *   livestream API) use this to match the client's TLS posture.
+   *
+   * @category Utilities
+   */
+  public get verifyTls(): boolean {
+
+    return this._verifyTls;
   }
 
   /**

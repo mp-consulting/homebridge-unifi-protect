@@ -303,7 +303,7 @@ export class ProtectLivestream extends EventEmitter {
     try {
 
       // Open the livestream WebSocket. We explicitly allow self-signed TLS certificates since Protect controllers ship with them by default.
-      this.ws = new WebSocketClient(wsUrl, { rejectUnauthorized: false });
+      this.ws = new WebSocketClient(wsUrl, { rejectUnauthorized: this.api.verifyTls });
 
       // The user's requested that we use a stream interface instead of an event interface to push complete fMP4 segments.
       if(options.useStream) {

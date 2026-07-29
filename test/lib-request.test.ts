@@ -5,7 +5,11 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import http from 'node:http';
+import https from 'node:https';
+import { readFileSync } from 'node:fs';
 import { request } from '../src/lib/request.js';
 
 describe('request', () => {
@@ -133,6 +137,30 @@ describe('request', () => {
     setTimeout(() => controller.abort(), 50);
 
     await expect(request(baseUrl + '/slow', { signal: controller.signal })).rejects.toThrow();
+  });
+
+  it('enforces TLS certificate validation based on the agent configuration', async () => {
+
+    // Stand up an HTTPS server with a self-signed certificate, the same TLS posture as a UniFi controller.
+    const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
+
+    const tlsServer = https.createServer({ cert: readFileSync(join(fixtures, 'tls-cert.pem')), key: readFileSync(join(fixtures, 'tls-key.pem')) },
+      (_req, res) => res.end('secure'));
+
+    await new Promise<void>(resolve => tlsServer.listen(0, resolve));
+
+    const tlsUrl = 'https://localhost:' + (tlsServer.address() as AddressInfo).port + '/';
+
+    // With validation enabled (the default), the self-signed certificate must be rejected.
+    await expect(request(tlsUrl, { agent: new https.Agent({ rejectUnauthorized: true }) })).rejects.toMatchObject({ code: 'DEPTH_ZERO_SELF_SIGNED_CERT' });
+
+    // With validation disabled - what verifyTls: false configures - the request must succeed.
+    const response = await request(tlsUrl, { agent: new https.Agent({ rejectUnauthorized: false }) });
+
+    expect(response.statusCode).toBe(200);
+    expect(await response.body.text()).toBe('secure');
+
+    tlsServer.close();
   });
 
   it('rejects on connection errors to unreachable hosts', async () => {

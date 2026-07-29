@@ -182,6 +182,13 @@
               "required": true,
               "placeholder": "e.g. some-unifi-protect-user",
               "description": "UniFi Protect username for this controller. Creating a homebridge-specific local user is strongly encouraged for security and sanity."
+            },
+
+            "verifyTls": {
+              "type": "boolean",
+              "title": "Verify TLS Certificate",
+              "required": false,
+              "description": "Validate the controller's TLS certificate when connecting. Leave this disabled unless your controller uses a certificate signed by a trusted certificate authority - UniFi controllers use self-signed certificates by default. Default: disabled."
             }
           }
         }
