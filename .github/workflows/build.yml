@@ -32,3 +32,29 @@ jobs:
 
       - name: Test
         run: npm test
+
+  # The plugin must remain fully functional without its optional dependencies - ffmpeg-for-homebridge is optional and the plugin falls back to the system FFmpeg.
+  build-without-optional:
+    name: Node 22.x (no optional dependencies)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Install dependencies (omitting optional)
+        run: npm ci --omit=optional
+
+      - name: Verify no optional dependencies were installed
+        run: test ! -d node_modules/ffmpeg-for-homebridge
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test

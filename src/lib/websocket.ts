@@ -27,10 +27,15 @@ const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 // Handshake timeout, in milliseconds.
 const WS_HANDSHAKE_TIMEOUT = 10000;
 
+// Default cap on the size of a single inbound message, in bytes. This guards against a buggy or hostile endpoint declaring an enormous frame length and driving
+// unbounded memory allocation. 64 MiB comfortably exceeds anything the UniFi realtime events and livestream APIs send.
+const WS_DEFAULT_MAX_PAYLOAD = 64 * 1024 * 1024;
+
 // Options available when connecting a WebSocket.
 export interface WebSocketClientOptions {
 
   headers?: Record<string, string>;
+  maxPayload?: number;
   rejectUnauthorized?: boolean;
 }
 
@@ -53,6 +58,8 @@ export class WebSocketClient extends EventEmitter {
   private closeTimer: Nullable<NodeJS.Timeout>;
   private fragments: Buffer[];
   private fragmentOpcode: number;
+  private fragmentSize: number;
+  private maxPayload: number;
   private socket: Nullable<net.Socket>;
 
   // Create a new WebSocket connection to a ws:// or wss:// URL and begin the opening handshake.
@@ -64,6 +71,8 @@ export class WebSocketClient extends EventEmitter {
     this.closeTimer = null;
     this.fragments = [];
     this.fragmentOpcode = 0;
+    this.fragmentSize = 0;
+    this.maxPayload = options.maxPayload ?? WS_DEFAULT_MAX_PAYLOAD;
     this.readyState = WebSocketClient.CONNECTING;
     this.socket = null;
 
@@ -210,6 +219,16 @@ export class WebSocketClient extends EventEmitter {
         offset += 8;
       }
 
+      // Enforce our payload size cap before we commit to buffering the frame. A frame this large is either a protocol violation or a hostile endpoint - either
+      // way, we're done. We account for any partially assembled fragmented message as well so fragmentation can't be used to sidestep the cap.
+      if((payloadLength > this.maxPayload) || ((this.fragmentSize + payloadLength) > this.maxPayload)) {
+
+        this.emit('error', new Error('WebSocket message exceeds the maximum allowed size of ' + this.maxPayload + ' bytes.'));
+        this.terminate();
+
+        return;
+      }
+
       // Server-to-client frames aren't masked in practice, but decode the mask if present to be protocol-complete.
       let mask: Nullable<Buffer> = null;
 
@@ -254,12 +273,14 @@ export class WebSocketClient extends EventEmitter {
       case Opcode.CONTINUATION:
 
         this.fragments.push(payload);
+        this.fragmentSize += payload.length;
 
         if(isFinal) {
 
           const message = Buffer.concat(this.fragments);
 
           this.fragments = [];
+          this.fragmentSize = 0;
           this.emitMessage(this.fragmentOpcode, message);
         }
 
@@ -272,6 +293,7 @@ export class WebSocketClient extends EventEmitter {
 
           this.fragmentOpcode = opcode;
           this.fragments = [ payload ];
+          this.fragmentSize = payload.length;
 
           break;
         }

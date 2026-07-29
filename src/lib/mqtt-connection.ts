@@ -79,6 +79,7 @@ export class MqttConnection extends EventEmitter {
   private host: string;
   private keepaliveTimer: Nullable<NodeJS.Timeout>;
   private packetId: number;
+  private pendingPings: number;
   private password?: string;
   private port: number;
   private reconnectPeriod: number;
@@ -123,6 +124,7 @@ export class MqttConnection extends EventEmitter {
     this.ended = false;
     this.keepaliveTimer = null;
     this.packetId = 0;
+    this.pendingPings = 0;
     this.reconnectPeriod = options.reconnectPeriod ?? 60000;
     this.reconnectTimer = null;
     this.rejectUnauthorized = options.rejectUnauthorized ?? true;
@@ -265,6 +267,9 @@ export class MqttConnection extends EventEmitter {
   // Dispatch a single decoded MQTT packet.
   private processPacket(header: number, packet: Buffer): void {
 
+    // Any complete packet from the broker - PINGRESP or otherwise - proves the connection is alive, so we reset our keepalive watchdog.
+    this.pendingPings = 0;
+
     switch(header & 0xF0) {
 
       case PacketType.CONNACK & 0xF0:
@@ -325,12 +330,27 @@ export class MqttConnection extends EventEmitter {
     }
   }
 
-  // Start the keepalive heartbeat with the broker.
+  // Start the keepalive heartbeat with the broker. Beyond sending PINGREQ packets, this doubles as a liveness watchdog: if the broker has gone quiet for two
+  // consecutive keepalive intervals - no PINGRESP, no traffic of any kind - we treat the connection as dead and tear it down so our reconnection logic can kick
+  // in, rather than waiting for the operating system's much slower TCP timeout to notice.
   private startKeepalive(): void {
 
     this.stopKeepalive();
+    this.pendingPings = 0;
 
-    this.keepaliveTimer = setInterval(() => this.writePacket(PacketType.PINGREQ, Buffer.alloc(0)), MQTT_KEEPALIVE * 1000 * 0.75);
+    this.keepaliveTimer = setInterval(() => {
+
+      // The broker hasn't responded to our last two pings - the connection is dead.
+      if(this.pendingPings >= 2) {
+
+        this.socket?.destroy();
+
+        return;
+      }
+
+      this.pendingPings++;
+      this.writePacket(PacketType.PINGREQ, Buffer.alloc(0));
+    }, MQTT_KEEPALIVE * 1000 * 0.75);
   }
 
   // Stop the keepalive heartbeat.
