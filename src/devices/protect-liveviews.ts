@@ -4,11 +4,11 @@
  * protect-liveviews.ts: Liveviews class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory } from 'homebridge';
-import { type Nullable, sanitizeName } from 'homebridge-plugin-utils';
+import { type Nullable, sanitizeName } from '../lib/index.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from '../settings.js';
 import { ProtectBase } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';
-import type { ProtectNvrLiveviewConfig } from 'unifi-protect';
+import type { ProtectNvrLiveviewConfig } from '../unifi/index.js';
 import { ProtectSecuritySystem } from './protect-securitysystem.js';
 
 export class ProtectLiveviews extends ProtectBase {

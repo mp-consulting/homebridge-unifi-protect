@@ -4,15 +4,15 @@
  * protect-nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP, PlatformAccessory } from 'homebridge';
-import { type HomebridgePluginLogging, MqttClient, type Nullable, retry, sanitizeName, sleep } from 'homebridge-plugin-utils';
+import { type HomebridgePluginLogging, MqttClient, type Nullable, retry, sanitizeName, sleep } from './lib/index.js';
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_CONTROLLER_REFRESH_INTERVAL, PROTECT_CONTROLLER_RETRY_INTERVAL } from './settings.js';
 import { ProtectCamera, ProtectChime, type ProtectDevice, ProtectDoorbell, ProtectLight, ProtectLiveviews, ProtectNvrSystemInfo, ProtectSensor,
   ProtectViewer } from './devices/index.js';
 import type { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig,
-  ProtectViewerConfig } from 'unifi-protect';
+  ProtectViewerConfig } from './unifi/index.js';
 import type { ProtectDeviceCategory, ProtectDeviceConfigTypes, ProtectDeviceTypes, ProtectDevices } from './protect-types.js';
 import { APIEvent } from 'homebridge';
-import { ProtectApi } from 'unifi-protect';
+import { ProtectApi } from './unifi/index.js';
 import { ProtectDeviceCategories } from './protect-types.js';
 import { ProtectEvents } from './protect-events.js';
 import type { ProtectNvrOptions } from './protect-options.js';

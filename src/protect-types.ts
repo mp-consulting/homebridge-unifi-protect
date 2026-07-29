@@ -5,7 +5,7 @@
  */
 
 import type { ProtectCamera, ProtectChime, ProtectDoorbell, ProtectLight, ProtectSensor, ProtectViewer } from './devices/index.js';
-import type { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectSensorConfig, ProtectViewerConfig } from 'unifi-protect';
+import type { ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectSensorConfig, ProtectViewerConfig } from './unifi/index.js';
 
 // Re-export utility functions.
 export { toCamelCase } from './protect-utils.js';

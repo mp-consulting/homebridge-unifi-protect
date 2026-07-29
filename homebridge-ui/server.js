@@ -6,8 +6,8 @@
 'use strict';
 
 import { featureOptionCategories, featureOptions } from '../dist/protect-options.js';
-import { HomebridgePluginUiServer } from '@homebridge/plugin-ui-utils';
-import { ProtectApi } from 'unifi-protect';
+import { HomebridgePluginUiServer } from '../dist/lib/ui-server.js';
+import { ProtectApi } from '../dist/unifi/index.js';
 import { discoverOnvifEndpoints } from './onvif.js';
 import dgram from 'node:dgram';
 import http from 'node:http';

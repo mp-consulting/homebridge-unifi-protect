@@ -37,7 +37,7 @@ A [Homebridge](https://homebridge.io) plugin that brings native HomeKit support 
 | [Homebridge](https://homebridge.io) | >= 1.8.0 |
 | Node.js | >= 20 |
 | UniFi Protect | v6+ (including v7) |
-| FFmpeg | Bundled, or any build with **fdk-aac** support |
+| FFmpeg | Installed on your system (`apt install ffmpeg`, `brew install ffmpeg`, …), or any build with **fdk-aac** support configured through the `videoProcessor` option |
 
 > [!IMPORTANT]
 > Only official (non-beta, non-early-access) releases of UniFi Protect firmware and hardware are supported. Beta versions of Apple operating systems are also unsupported.

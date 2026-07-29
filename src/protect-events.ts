@@ -4,9 +4,9 @@
  * protect-events.ts: Protect events class for UniFi Protect.
  */
 import type { API, HAP, Service } from 'homebridge';
-import type { HomebridgePluginLogging, Nullable } from 'homebridge-plugin-utils';
+import type { HomebridgePluginLogging, Nullable } from './lib/index.js';
 import type { ProtectApi, ProtectEventAdd, ProtectEventMetadata, ProtectEventMetadataDetectedThumbnail, ProtectEventPacket,
-  ProtectKnownDeviceTypes } from 'unifi-protect';
+  ProtectKnownDeviceTypes } from './unifi/index.js';
 import type { ProtectCamera, ProtectDevice } from './devices/index.js';
 import { type ProtectDeviceConfigTypes, ProtectReservedNames } from './protect-types.js';
 import { EventEmitter } from 'node:events';

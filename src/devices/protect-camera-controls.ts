@@ -4,10 +4,10 @@
  * protect-camera-controls.ts: Night vision, NVR recording, access lock, and camera details delegate for UniFi Protect cameras.
  */
 import type { CharacteristicValue, HAP } from 'homebridge';
-import { acquireService, validService } from 'homebridge-plugin-utils';
+import { acquireService, validService } from '../lib/index.js';
 import { PROTECT_HOMEKIT_UPDATE_DELAY } from '../settings.js';
 import type { ProtectCamera } from './protect-camera.js';
-import type { ProtectCameraConfig } from 'unifi-protect';
+import type { ProtectCameraConfig } from '../unifi/index.js';
 import { ProtectReservedNames } from '../protect-types.js';
 import { toCamelCase } from '../protect-utils.js';
 

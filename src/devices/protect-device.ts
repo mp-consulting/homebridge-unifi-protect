@@ -4,9 +4,9 @@
  * protect-device.ts: Base class for all UniFi Protect devices.
  */
 import type { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from 'homebridge';
-import { type HomebridgePluginLogging, type Nullable, acquireService, sanitizeName, validService } from 'homebridge-plugin-utils';
+import { type HomebridgePluginLogging, type Nullable, acquireService, sanitizeName, validService } from '../lib/index.js';
 import { PROTECT_HOMEKIT_UPDATE_DELAY, PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION } from '../settings.js';
-import type { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from 'unifi-protect';
+import type { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from '../unifi/index.js';
 import { type ProtectDeviceConfigTypes, ProtectReservedNames } from '../protect-types.js';
 import type { ProtectNvr } from '../protect-nvr.js';
 import type { ProtectPlatform } from '../protect-platform.js';

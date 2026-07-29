@@ -3,8 +3,8 @@
  *
  * protect-playlist.ts: M3U playlist server for UniFi Protect camera livestreams.
  */
-import type { HomebridgePluginLogging } from 'homebridge-plugin-utils';
-import type { ProtectApi } from 'unifi-protect';
+import type { HomebridgePluginLogging } from './lib/index.js';
+import type { ProtectApi } from './unifi/index.js';
 import { PROTECT_M3U_PLAYLIST_PORT, PROTECT_PLAYLIST_LOGO_URL } from './settings.js';
 import http from 'node:http';
 import util from 'node:util';

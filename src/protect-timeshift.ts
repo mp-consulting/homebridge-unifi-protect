@@ -3,11 +3,11 @@
  *
  * protect-timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
  */
-import { type FfmpegLivestreamProcess, type HomebridgePluginLogging, type Nullable, runWithTimeout } from 'homebridge-plugin-utils';
+import { type FfmpegLivestreamProcess, type HomebridgePluginLogging, type Nullable, runWithTimeout } from './lib/index.js';
 import { EventEmitter } from 'node:events';
 import { PROTECT_SEGMENT_RESOLUTION } from './settings.js';
 import type { ProtectCamera } from './devices/index.js';
-import type { ProtectLivestream } from 'unifi-protect';
+import type { ProtectLivestream } from './unifi/index.js';
 import type { RtspEntry } from './devices/protect-camera.js';
 
 // UniFi Protect livestream timeshift buffer.

@@ -1,0 +1,402 @@
+/* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ * Copyright(C) 2026, Mickael Palma / MP Consulting. All rights reserved.
+ *
+ * websocket.ts: Minimal, dependency-free RFC 6455 WebSocket client built on Node's https module.
+ */
+import type net from 'node:net';
+import { createHash, randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import http from 'node:http';
+import https from 'node:https';
+import type { Nullable } from './util.js';
+
+// WebSocket protocol opcodes.
+const enum Opcode {
+
+  CONTINUATION = 0x0,
+  TEXT = 0x1,
+  BINARY = 0x2,
+  CLOSE = 0x8,
+  PING = 0x9,
+  PONG = 0xA
+}
+
+// The RFC 6455 handshake GUID.
+const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+
+// Handshake timeout, in milliseconds.
+const WS_HANDSHAKE_TIMEOUT = 10000;
+
+// Options available when connecting a WebSocket.
+export interface WebSocketClientOptions {
+
+  headers?: Record<string, string>;
+  rejectUnauthorized?: boolean;
+}
+
+/**
+ * A minimal RFC 6455 WebSocket client supporting the ws and wss URL schemes, including self-signed TLS endpoints. Emits `open`, `message`, `close`, and `error`
+ * events. Text messages are delivered as strings and binary messages as Buffers. This provides the small client-side subset of the WebSocket protocol the
+ * plugin needs without requiring an external dependency.
+ */
+export class WebSocketClient extends EventEmitter {
+
+  // Connection states, mirroring the standard WebSocket readyState semantics.
+  public static readonly CONNECTING = 0;
+  public static readonly OPEN = 1;
+  public static readonly CLOSING = 2;
+  public static readonly CLOSED = 3;
+
+  public readyState: number;
+
+  private buffer: Buffer;
+  private closeTimer: Nullable<NodeJS.Timeout>;
+  private fragments: Buffer[];
+  private fragmentOpcode: number;
+  private socket: Nullable<net.Socket>;
+
+  // Create a new WebSocket connection to a ws:// or wss:// URL and begin the opening handshake.
+  constructor(url: string, options: WebSocketClientOptions = {}) {
+
+    super();
+
+    this.buffer = Buffer.alloc(0);
+    this.closeTimer = null;
+    this.fragments = [];
+    this.fragmentOpcode = 0;
+    this.readyState = WebSocketClient.CONNECTING;
+    this.socket = null;
+
+    this.connect(url, options);
+  }
+
+  // Execute the HTTP upgrade handshake that establishes the WebSocket connection.
+  private connect(url: string, options: WebSocketClientOptions): void {
+
+    const parsed = new URL(url);
+    const isSecure = parsed.protocol === 'wss:';
+    const key = randomBytes(16).toString('base64');
+
+    const requestFn = isSecure ? https.request : http.request;
+
+    const req = requestFn({
+
+      headers: {
+
+        'Connection': 'Upgrade',
+        'Sec-WebSocket-Key': key,
+        'Sec-WebSocket-Version': '13',
+        'Upgrade': 'websocket',
+        ...options.headers,
+      },
+      host: parsed.hostname,
+      method: 'GET',
+      path: parsed.pathname + parsed.search,
+      port: parsed.port ? parseInt(parsed.port) : (isSecure ? 443 : 80),
+      rejectUnauthorized: options.rejectUnauthorized ?? true,
+      timeout: WS_HANDSHAKE_TIMEOUT,
+    });
+
+    req.on('upgrade', (res, socket, head) => {
+
+      // Validate the handshake per RFC 6455 - the server must echo back the hashed key.
+      const expected = createHash('sha1').update(key + WS_GUID).digest('base64');
+
+      if((res.statusCode !== 101) || (res.headers['sec-websocket-accept'] !== expected)) {
+
+        socket.destroy();
+        this.readyState = WebSocketClient.CLOSED;
+        this.emit('error', new Error('Invalid WebSocket handshake response from the server.'));
+        this.emit('close');
+
+        return;
+      }
+
+      this.socket = socket;
+      this.readyState = WebSocketClient.OPEN;
+
+      socket.setNoDelay(true);
+      socket.setTimeout(0);
+
+      socket.on('data', (data: Buffer) => this.processData(data));
+
+      socket.on('error', (error: Error) => this.emit('error', error));
+
+      socket.on('close', () => {
+
+        if(this.closeTimer) {
+
+          clearTimeout(this.closeTimer);
+          this.closeTimer = null;
+        }
+
+        this.readyState = WebSocketClient.CLOSED;
+        this.emit('close');
+      });
+
+      this.emit('open');
+
+      // Process any data that arrived alongside the handshake.
+      if(head.length) {
+
+        this.processData(head);
+      }
+    });
+
+    req.on('response', (res) => {
+
+      // The server refused to upgrade the connection.
+      this.readyState = WebSocketClient.CLOSED;
+      this.emit('error', new Error('WebSocket upgrade refused by the server: HTTP ' + res.statusCode + '.'));
+      this.emit('close');
+      req.destroy();
+    });
+
+    req.on('timeout', () => req.destroy(new Error('WebSocket handshake timed out.')));
+
+    req.on('error', (error: Error) => {
+
+      // If the upgrade succeeded, errors are surfaced through the socket instead.
+      if(this.readyState !== WebSocketClient.CONNECTING) {
+
+        return;
+      }
+
+      this.readyState = WebSocketClient.CLOSED;
+      this.emit('error', error);
+      this.emit('close');
+    });
+
+    req.end();
+  }
+
+  // Process inbound data from the server, decoding complete WebSocket frames as they arrive.
+  private processData(data: Buffer): void {
+
+    this.buffer = Buffer.concat([ this.buffer, data ]);
+
+    for(;;) {
+
+      // We need at least the two-byte frame header.
+      if(this.buffer.length < 2) {
+
+        return;
+      }
+
+      const isFinal = !!(this.buffer[0] & 0x80);
+      const opcode = this.buffer[0] & 0x0F;
+      const isMasked = !!(this.buffer[1] & 0x80);
+      let payloadLength = this.buffer[1] & 0x7F;
+      let offset = 2;
+
+      // Decode the extended payload lengths.
+      if(payloadLength === 126) {
+
+        if(this.buffer.length < (offset + 2)) {
+
+          return;
+        }
+
+        payloadLength = this.buffer.readUInt16BE(offset);
+        offset += 2;
+      } else if(payloadLength === 127) {
+
+        if(this.buffer.length < (offset + 8)) {
+
+          return;
+        }
+
+        payloadLength = Number(this.buffer.readBigUInt64BE(offset));
+        offset += 8;
+      }
+
+      // Server-to-client frames aren't masked in practice, but decode the mask if present to be protocol-complete.
+      let mask: Nullable<Buffer> = null;
+
+      if(isMasked) {
+
+        if(this.buffer.length < (offset + 4)) {
+
+          return;
+        }
+
+        mask = this.buffer.subarray(offset, offset + 4);
+        offset += 4;
+      }
+
+      // Wait for the complete frame to arrive.
+      if(this.buffer.length < (offset + payloadLength)) {
+
+        return;
+      }
+
+      const payload = Buffer.from(this.buffer.subarray(offset, offset + payloadLength));
+
+      this.buffer = this.buffer.subarray(offset + payloadLength);
+
+      if(mask) {
+
+        for(let index = 0; index < payload.length; index++) {
+
+          payload[index] ^= mask[index % 4];
+        }
+      }
+
+      this.processFrame(opcode, payload, isFinal);
+    }
+  }
+
+  // Handle a single decoded WebSocket frame, reassembling fragmented messages as needed.
+  private processFrame(opcode: number, payload: Buffer, isFinal: boolean): void {
+
+    switch(opcode) {
+
+      case Opcode.CONTINUATION:
+
+        this.fragments.push(payload);
+
+        if(isFinal) {
+
+          const message = Buffer.concat(this.fragments);
+
+          this.fragments = [];
+          this.emitMessage(this.fragmentOpcode, message);
+        }
+
+        break;
+
+      case Opcode.TEXT:
+      case Opcode.BINARY:
+
+        if(!isFinal) {
+
+          this.fragmentOpcode = opcode;
+          this.fragments = [ payload ];
+
+          break;
+        }
+
+        this.emitMessage(opcode, payload);
+
+        break;
+
+      case Opcode.CLOSE:
+
+        // Acknowledge the close handshake if the server initiated it, and shut the connection down.
+        if(this.readyState === WebSocketClient.OPEN) {
+
+          this.sendFrame(Opcode.CLOSE, payload.subarray(0, 2));
+        }
+
+        this.readyState = WebSocketClient.CLOSING;
+        this.socket?.end();
+
+        break;
+
+      case Opcode.PING:
+
+        this.sendFrame(Opcode.PONG, payload);
+
+        break;
+
+      default:
+
+        // Pong frames and unknown opcodes need no action.
+        break;
+    }
+  }
+
+  // Deliver a complete message to our listeners. Text messages are decoded to strings.
+  private emitMessage(opcode: number, payload: Buffer): void {
+
+    this.emit('message', (opcode === Opcode.TEXT) ? payload.toString('utf8') : payload);
+  }
+
+  // Encode and transmit a single client-to-server frame. Client frames are always masked per RFC 6455.
+  private sendFrame(opcode: number, payload: Buffer): void {
+
+    if(!this.socket || this.socket.destroyed) {
+
+      return;
+    }
+
+    const mask = randomBytes(4);
+    let lengthHeader;
+
+    if(payload.length < 126) {
+
+      lengthHeader = Buffer.from([ 0x80 | payload.length ]);
+    } else if(payload.length < 65536) {
+
+      lengthHeader = Buffer.alloc(3);
+      lengthHeader[0] = 0x80 | 126;
+      lengthHeader.writeUInt16BE(payload.length, 1);
+    } else {
+
+      lengthHeader = Buffer.alloc(9);
+      lengthHeader[0] = 0x80 | 127;
+      lengthHeader.writeBigUInt64BE(BigInt(payload.length), 1);
+    }
+
+    const masked = Buffer.from(payload);
+
+    for(let index = 0; index < masked.length; index++) {
+
+      masked[index] ^= mask[index % 4];
+    }
+
+    this.socket.write(Buffer.concat([ Buffer.from([ 0x80 | opcode ]), lengthHeader, mask, masked ]));
+  }
+
+  // Send a message to the server. Strings are sent as text frames and Buffers as binary frames.
+  public send(data: string | Buffer): void {
+
+    if(this.readyState !== WebSocketClient.OPEN) {
+
+      return;
+    }
+
+    if(typeof data === 'string') {
+
+      this.sendFrame(Opcode.TEXT, Buffer.from(data, 'utf8'));
+
+      return;
+    }
+
+    this.sendFrame(Opcode.BINARY, data);
+  }
+
+  // Initiate a graceful close of the connection, falling back to destroying the socket if the server doesn't complete the close handshake promptly.
+  public close(): void {
+
+    if((this.readyState === WebSocketClient.CLOSING) || (this.readyState === WebSocketClient.CLOSED)) {
+
+      return;
+    }
+
+    // The handshake hasn't completed yet - there's nothing to gracefully close.
+    if(this.readyState === WebSocketClient.CONNECTING) {
+
+      this.readyState = WebSocketClient.CLOSED;
+
+      return;
+    }
+
+    const closePayload = Buffer.alloc(2);
+
+    closePayload.writeUInt16BE(1000, 0);
+
+    this.sendFrame(Opcode.CLOSE, closePayload);
+    this.readyState = WebSocketClient.CLOSING;
+
+    // Give the server a moment to complete the close handshake before we force the issue.
+    this.closeTimer = setTimeout(() => this.socket?.destroy(), 1000);
+  }
+
+  // Immediately terminate the connection.
+  public terminate(): void {
+
+    this.readyState = WebSocketClient.CLOSED;
+    this.socket?.destroy();
+  }
+}

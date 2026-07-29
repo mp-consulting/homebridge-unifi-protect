@@ -83,13 +83,7 @@
     "monitor:events": "npx tsx scripts/event-schema-monitor.ts"
   },
   "main": "dist/index.js",
-  "dependencies": {
-    "@homebridge/plugin-ui-utils": "2.2.3",
-    "ffmpeg-for-homebridge": "2.2.2",
-    "homebridge-plugin-utils": "^1.35.0",
-    "undici": "^8.7.0",
-    "unifi-protect": "^4.29.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@mp-consulting/homebridge-ui-kit": "^1.0.0",
@@ -106,7 +100,6 @@
     "vitest": "^4.1.5"
   },
   "overrides": {
-    "@types/readable-stream": "4.0.23",
-    "undici": "$undici"
+    "@types/readable-stream": "4.0.23"
   }
 }

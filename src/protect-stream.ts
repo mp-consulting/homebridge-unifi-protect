@@ -8,11 +8,10 @@
 import type { API, CameraController, CameraControllerOptions, HAP, PrepareStreamCallback, PrepareStreamRequest,
   PrepareStreamResponse, SRTPCryptoSuites, Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest,
   StreamRequestCallback, StreamingRequest } from 'homebridge';
-import { Agent, type ErrorEvent, WebSocket } from 'undici';
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, H264Level, H264Profile, MediaContainerType,
   StreamRequestTypes } from 'homebridge';
 import { FfmpegOptions, FfmpegStreamingProcess, HKSV_FRAGMENT_LENGTH, HOMEKIT_IDR_INTERVAL, type HomebridgePluginLogging, type HomebridgeStreamingDelegate,
-  type Nullable, RtpDemuxer, formatBps } from 'homebridge-plugin-utils';
+  type Nullable, RtpDemuxer, WebSocketClient, formatBps } from './lib/index.js';
 import { PROTECT_FFMPEG_PROBESIZE_ADJUSTMENT_THRESHOLD, PROTECT_FFMPEG_PROBESIZE_MAX, PROTECT_FFMPEG_PROBESIZE_OVERRIDE_TIMEOUT,
   PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_TRANSCODE_MAX_DOWNSCALE_RATIO } from './settings.js';
 import type { ProtectCamera, RtspEntry } from './devices/index.js';
@@ -1005,14 +1004,14 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
     try {
 
       // Now it's time to talkback.
-      let ws: Nullable<WebSocket> = null;
+      let ws: Nullable<WebSocketClient> = null;
       let isTalkbackLive = false;
       let dataListener: (data: Buffer) => void;
       let openListener: () => void;
       const wsCleanup = (): void => {
 
         // Close the websocket.
-        if(ws?.readyState !== WebSocket.CLOSED) {
+        if(ws?.readyState !== WebSocketClient.CLOSED) {
 
           ws?.close();
         }
@@ -1021,25 +1020,24 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
       if(sessionInfo.talkBack && !this.protectCamera.hints.twoWayAudioDirect) {
 
         // Open the talkback connection.
-        ws = new WebSocket(sessionInfo.talkBack, { dispatcher: new Agent({ connect: { rejectUnauthorized: false } }) });
+        ws = new WebSocketClient(sessionInfo.talkBack, { rejectUnauthorized: false });
         isTalkbackLive = true;
 
         // Catch any errors and inform the user, if needed.
-        ws.addEventListener('error', (event: ErrorEvent) => {
+        ws.once('error', (error: Error) => {
 
           // Ignore timeout errors and TypeErrors, but notify the user about anything else.
-          if(!(event.error instanceof TypeError) && ((event.error as NodeJS.ErrnoException).code !== 'ETIMEDOUT')) {
+          if(!(error instanceof TypeError) && ((error as NodeJS.ErrnoException).code !== 'ETIMEDOUT')) {
 
-            this.log.error('Error in communicating with the return audio channel: %s - %s',
-              (event.error.cause as NodeJS.ErrnoException).code, event.error.cause);
+            this.log.error('Error in communicating with the return audio channel: %s - %s', (error as NodeJS.ErrnoException).code, error.message);
           }
 
           // Clean up our talkback websocket.
           wsCleanup();
-        }, { once: true });
+        });
 
         // Catch any stray open events after we've closed.
-        ws.addEventListener('open', openListener = (): void => {
+        ws.on('open', openListener = (): void => {
 
           // If we've somehow opened after we've wrapped up talkback, terminate the connection.
           if(!isTalkbackLive) {
@@ -1050,10 +1048,10 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
         });
 
         // Cleanup after ourselves on close.
-        ws.addEventListener('close', () => {
+        ws.once('close', () => {
 
-          ws?.removeEventListener('open', openListener);
-        }, { once: true });
+          ws?.removeListener('open', openListener);
+        });
       }
 
       // Wait for the first RTP packet to be received before trying to launch FFmpeg.

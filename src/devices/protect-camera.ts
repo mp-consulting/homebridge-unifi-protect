@@ -4,11 +4,11 @@
  * protect-camera.ts: Camera device class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory, Resolution } from 'homebridge';
-import type { DeepPartial, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectEventAdd, ProtectEventPacket } from 'unifi-protect';
+import type { DeepPartial, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectEventAdd, ProtectEventPacket } from '../unifi/index.js';
 import { ProtectReservedNames } from '../protect-types.js';
 import { LivestreamManager } from '../protect-livestream.js';
 import type { MessageSwitchInterface } from './protect-doorbell.js';
-import type { Nullable } from 'homebridge-plugin-utils';
+import type { Nullable } from '../lib/index.js';
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_PROBESIZE, PROTECT_HOMEKIT_UPDATE_DELAY, PROTECT_TRANSCODE_BITRATE,
   PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE } from '../settings.js';
 import { ProtectCameraControls } from './protect-camera-controls.js';
