@@ -7,13 +7,13 @@ import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_DOORBELL_AUTHSENSOR_DURATION, PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_DOORBELL_CHIME_DURATION_MECHANICAL,
   PROTECT_DOORBELL_MESSAGE_DURATION, PROTECT_HOMEKIT_UPDATE_DELAY } from '../settings.js';
 import type { DeepPartial, ProtectCameraConfig, ProtectCameraLcdMessageConfig, ProtectChimeConfig, ProtectEventAdd, ProtectEventPacket,
-  ProtectNvrConfig } from 'unifi-protect';
+  ProtectNvrConfig } from '../unifi/index.js';
 import { ProtectReservedNames } from '../protect-types.js';
 import { toCamelCase } from '../protect-utils.js';
 import { ProtectCamera } from './protect-camera.js';
 import { ProtectCameraPackage } from './protect-camera-package.js';
 import type { ProtectNvr } from '../protect-nvr.js';
-import { sanitizeName } from 'homebridge-plugin-utils';
+import { sanitizeName } from '../lib/index.js';
 
 // A doorbell message entry.
 interface MessageInterface {

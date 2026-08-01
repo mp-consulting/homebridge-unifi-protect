@@ -4,7 +4,7 @@
  * protect-light.ts: Light device class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory } from 'homebridge';
-import type { DeepPartial, ProtectEventPacket, ProtectLightConfig } from 'unifi-protect';
+import type { DeepPartial, ProtectEventPacket, ProtectLightConfig } from '../unifi/index.js';
 import { PROTECT_HOMEKIT_UPDATE_DELAY } from '../settings.js';
 import { ProtectDevice } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';

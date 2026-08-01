@@ -17,7 +17,7 @@
  * For "update" actions the payload is a partial device config, indexed by modelKey.
  * For "remove" actions the payload can be empty or minimal.
  */
-import type { ProtectEventAdd, ProtectEventPacket } from 'unifi-protect';
+import type { ProtectEventAdd, ProtectEventPacket } from '../src/unifi/index.js';
 
 // ---- Schema definition types ----
 

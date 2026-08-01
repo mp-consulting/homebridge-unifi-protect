@@ -4,7 +4,7 @@
  * protect-camera-sensors.ts: Smart detection, tamper, and ambient light sensor delegate for UniFi Protect cameras.
  */
 import type { HAP, Service } from 'homebridge';
-import { acquireService } from 'homebridge-plugin-utils';
+import { acquireService } from '../lib/index.js';
 import { PROTECT_AMBIENT_LIGHT_POLL_INTERVAL } from '../settings.js';
 import type { ProtectCamera } from './protect-camera.js';
 import { ProtectReservedNames } from '../protect-types.js';

@@ -3,11 +3,11 @@
  *
  * protect-livestream.ts: Protect livestream API manager.
  */
-import { FfmpegLivestreamProcess, sleep } from 'homebridge-plugin-utils';
+import { FfmpegLivestreamProcess, sleep } from './lib/index.js';
 import { PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL, PROTECT_LIVESTREAM_RESTART_INTERVAL, PROTECT_LIVESTREAM_TIMEOUT,
   PROTECT_SEGMENT_RESOLUTION } from './settings.js';
 import type { ProtectCamera } from './devices/index.js';
-import type { ProtectLivestream } from 'unifi-protect';
+import type { ProtectLivestream } from './unifi/index.js';
 import type { RtspEntry } from './devices/protect-camera.js';
 
 export class LivestreamManager {

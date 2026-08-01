@@ -100,6 +100,7 @@ export const openAddController = (prefillAddress) => {
   $('inputAddress').value = prefillAddress || '';
   $('inputUsername').value = '';
   $('inputPassword').value = '';
+  $('inputVerifyTls').checked = false;
   $('setupError').style.display = 'none';
   $('cancelSetupBtn').style.display = getControllers().length ? 'inline-block' : 'none';
   showScreen('setupScreen');
@@ -122,6 +123,7 @@ export const openEditController = (index) => {
   $('inputAddress').value = ctrl.address || '';
   $('inputUsername').value = ctrl.username || '';
   $('inputPassword').value = ctrl.password || '';
+  $('inputVerifyTls').checked = ctrl.verifyTls === true;
   $('setupError').style.display = 'none';
   $('cancelSetupBtn').style.display = 'inline-block';
   showScreen('setupScreen');
@@ -136,6 +138,7 @@ export const handleSetupSubmit = async (event) => {
   const address = $('inputAddress').value.trim();
   const username = $('inputUsername').value.trim();
   const password = $('inputPassword').value.trim();
+  const verifyTls = $('inputVerifyTls').checked;
 
   if(!address || !username || !password) {
 
@@ -154,7 +157,7 @@ export const handleSetupSubmit = async (event) => {
   try {
 
 
-    const devices = await homebridge.request('/getDevices', { address, password, username });
+    const devices = await homebridge.request('/getDevices', { address, password, username, verifyTls });
 
     if(!devices?.length) {
 
@@ -170,7 +173,8 @@ export const handleSetupSubmit = async (event) => {
 
     state.pluginConfig[0].controllers ||= [];
 
-    const controllerData = { address, password, username };
+    // verifyTls is always carried explicitly so unchecking the toggle overrides any previously saved value when we merge with the existing configuration.
+    const controllerData = { address, password, username, verifyTls };
 
     // The first device in the response is the NVR — use its name.
     if(devices[0]?.name) {

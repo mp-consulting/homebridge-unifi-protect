@@ -4,8 +4,8 @@
  * protect-viewer.ts: Viewer device class for UniFi Protect.
  */
 import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
-import type { DeepPartial, ProtectEventPacket, ProtectViewerConfig } from 'unifi-protect';
-import type { Nullable } from 'homebridge-plugin-utils';
+import type { DeepPartial, ProtectEventPacket, ProtectViewerConfig } from '../unifi/index.js';
+import type { Nullable } from '../lib/index.js';
 import { ProtectDevice } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';
 

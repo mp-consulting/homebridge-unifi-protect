@@ -7,7 +7,7 @@ import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_DOORBELL_CHIME_DURATION_
   PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS, PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS,
   PROTECT_M3U_PLAYLIST_PORT, PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION, PROTECT_TRANSCODE_BITRATE,
   PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE } from './settings.js';
-import type { FeatureOptionEntry } from 'homebridge-plugin-utils';
+import type { FeatureOptionEntry } from './lib/index.js';
 
 // Plugin configuration options.
 export type ProtectOptions = {
@@ -56,6 +56,7 @@ export interface ProtectNvrOptions {
   overrideAddress?: string;
   username: string;
   password: string;
+  verifyTls?: boolean;
 }
 
 // Normalize a MAC address for case- and separator-insensitive comparison (e.g. "f6:24:49:03:a5:b3" and "F6244903A5B3" compare equal).

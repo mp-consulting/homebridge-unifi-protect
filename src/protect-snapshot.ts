@@ -4,8 +4,8 @@
  * protect-snapshot.ts: UniFi Protect HomeKit snapshot class.
  */
 import type { API, HAP, SnapshotRequest } from 'homebridge';
-import { Agent, request } from 'undici';
-import { FfmpegExec, type HomebridgePluginLogging, type Nullable, runWithTimeout } from 'homebridge-plugin-utils';
+import { FfmpegExec, type HomebridgePluginLogging, type Nullable, request, runWithTimeout } from './lib/index.js';
+import https from 'node:https';
 import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE, PROTECT_SNAPSHOT_TIMEOUT } from './settings.js';
 import type { ProtectCamera } from './devices/index.js';
 import type { ProtectNvr } from './protect-nvr.js';
@@ -138,13 +138,13 @@ export class ProtectSnapshot {
     try {
 
       // Allow self-signed certificates - third-party cameras commonly serve HTTPS with non-public certs.
-      const dispatcher = overrideUrl.startsWith('https://') ?
-        new Agent({ connect: { rejectUnauthorized: false } }) :
+      const agent = overrideUrl.startsWith('https://') ?
+        new https.Agent({ rejectUnauthorized: false }) :
         undefined;
 
       const { statusCode, body } = await request(overrideUrl, {
 
-        dispatcher,
+        agent,
         method: 'GET',
         signal: AbortSignal.timeout(PROTECT_SNAPSHOT_TIMEOUT),
       });

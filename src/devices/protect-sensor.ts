@@ -3,7 +3,7 @@
  *
  * protect-sensor.ts: Sensor device class for UniFi Protect.
  */
-import type { DeepPartial, ProtectEventPacket, ProtectSensorConfig } from 'unifi-protect';
+import type { DeepPartial, ProtectEventPacket, ProtectSensorConfig } from '../unifi/index.js';
 import type { PlatformAccessory, Service } from 'homebridge';
 import { HOMEKIT_AMBIENT_LIGHT_MINIMUM } from '../settings.js';
 import { ProtectDevice } from './protect-device.js';

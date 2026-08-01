@@ -8,7 +8,7 @@
  * deeply appreciated.
  */
 import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, PlatformAccessory, RecordingPacket } from 'homebridge';
-import { FfmpegRecordingProcess, type HomebridgePluginLogging, type Nullable, formatBps } from 'homebridge-plugin-utils';
+import { FfmpegRecordingProcess, type HomebridgePluginLogging, type Nullable, formatBps } from './lib/index.js';
 import type { ProtectCamera, RtspEntry } from './devices/index.js';
 import { HDSProtocolSpecificErrorReason } from 'homebridge';
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from './settings.js';

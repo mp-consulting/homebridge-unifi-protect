@@ -7,7 +7,7 @@ import type { CharacteristicValue, PlatformAccessory } from 'homebridge';
 import { ProtectReservedNames } from '../protect-types.js';
 import { toCamelCase } from '../protect-utils.js';
 import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION, PROTECT_HOMEKIT_UPDATE_DELAY } from '../settings.js';
-import type { ProtectChimeConfig } from 'unifi-protect';
+import type { ProtectChimeConfig } from '../unifi/index.js';
 import { ProtectDevice } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';
 

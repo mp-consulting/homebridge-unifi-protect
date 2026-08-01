@@ -10,7 +10,7 @@ Homebridge plugin (`@mp-consulting/homebridge-unifi-protect`) providing full Hom
 - **Runtime**: Node.js >= 20, Homebridge >= 1.8.0
 - **Testing**: Vitest with v8 coverage
 - **Linting**: ESLint 9 flat config with typescript-eslint
-- **Key deps**: `unifi-protect` (API client), `homebridge-plugin-utils` (HBUP utilities), `ffmpeg-for-homebridge` (video), `undici` (HTTP)
+- **Dependencies**: None required at runtime — the UniFi Protect API client (`src/unifi/`) and plugin utilities incl. the FFmpeg pipeline (`src/lib/`) are implemented in-repo on Node.js built-ins. `ffmpeg-for-homebridge` is an *optional* dependency resolved dynamically; when absent, FFmpeg comes from the system or the `videoProcessor` config option.
 
 ## Commands
 
@@ -40,6 +40,9 @@ src/
 ├── protect-options.ts          # Feature options & config types
 ├── protect-types.ts            # Type definitions & enums
 ├── protect-utils.ts            # Utility functions
+├── lib/                        # Dependency-free utility library (feature options, MQTT client, HTTPS/WebSocket transports, HomeKit service helpers, UI server)
+│   └── ffmpeg/                 # FFmpeg pipeline (codecs, options, streaming/recording processes, RTP demuxer/ports, fMP4 parsing)
+├── unifi/                      # UniFi Protect API client (login, bootstrap, events WebSocket, livestream) built on src/lib transports
 └── devices/
     ├── protect-device.ts       # Base device class
     ├── protect-camera.ts       # Camera accessory (largest file ~1700 lines)

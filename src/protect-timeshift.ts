@@ -3,11 +3,11 @@
  *
  * protect-timeshift.ts: UniFi Protect livestream timeshift buffer implementation to support HomeKit Secure Video.
  */
-import { type FfmpegLivestreamProcess, type HomebridgePluginLogging, type Nullable, runWithTimeout } from 'homebridge-plugin-utils';
+import { type FfmpegLivestreamProcess, type HomebridgePluginLogging, type Nullable, runWithTimeout } from './lib/index.js';
 import { EventEmitter } from 'node:events';
 import { PROTECT_SEGMENT_RESOLUTION } from './settings.js';
 import type { ProtectCamera } from './devices/index.js';
-import type { ProtectLivestream } from 'unifi-protect';
+import type { ProtectLivestream } from './unifi/index.js';
 import type { RtspEntry } from './devices/protect-camera.js';
 
 // UniFi Protect livestream timeshift buffer.
@@ -214,8 +214,10 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
       return null;
     }
 
-    // If we have the initialization segment, return it. If we haven't seen it yet, wait for a couple of seconds and check an additional time.
-    return this.livestream.initSegment ?? await runWithTimeout(this.livestream.getInitSegment(), 2000);
+    // If we have the initialization segment, return it. If we haven't seen it yet, wait for a couple of seconds and check an additional time. getInitSegment()
+    // rejects if the livestream is stopped (or was never started) before the segment arrives - that must resolve to null here rather than propagate, since we
+    // top out in void-invoked callers where a rejection would be unhandled.
+    return this.livestream.initSegment ?? await runWithTimeout(this.livestream.getInitSegment().catch(() => null), 2000);
   }
 
   // Return the last duration milliseconds of the buffer, with an initialization segment.

@@ -3,7 +3,7 @@
  *
  * protect-camera-video.ts: Video stream management delegate for UniFi Protect cameras.
  */
-import type { Nullable } from 'homebridge-plugin-utils';
+import type { Nullable } from '../lib/index.js';
 import type { ProtectCamera, RtspEntry } from './protect-camera.js';
 import { formatResolution } from './protect-camera.js';
 import { ProtectStreamingDelegate } from '../protect-stream.js';
