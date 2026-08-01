@@ -79,6 +79,17 @@
             <input type="password" class="form-control" id="inputPassword" autocomplete="current-password" placeholder="Local user account password" required>
           </div>
         </div>
+        <div class="mb-3 row">
+          <label for="inputVerifyTls" class="col-sm-3 col-form-label"><i class="bi bi-shield-check"></i> Verify TLS</label>
+          <div class="col-sm-9">
+            <div class="form-check form-switch mt-2">
+              <input class="form-check-input" type="checkbox" id="inputVerifyTls">
+              <label class="form-check-label" for="inputVerifyTls"><small class="form-text text-muted">Validate the controller's TLS certificate. Leave this
+                disabled unless your controller uses a certificate signed by a trusted certificate authority - UniFi controllers use self-signed certificates by
+                default.</small></label>
+            </div>
+          </div>
+        </div>
 
         <div id="setupError" class="alert alert-danger" style="display: none;">
           <i class="bi bi-exclamation-circle"></i> <span id="setupErrorText"></span>

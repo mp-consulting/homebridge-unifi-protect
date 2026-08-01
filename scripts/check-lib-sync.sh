@@ -20,23 +20,49 @@ status=0
 tmpfile="$(mktemp)"
 trap 'rm -f "$tmpfile"' EXIT
 
+# Fetch one shared library file from the sibling repository. Returns 0 when the file was retrieved, 1 when it doesn't exist on that branch, and 2 on any
+# transport or server error, so callers can tell a legitimately absent file apart from an outage or rate limit.
 fetch() {
 
-  curl -fsSL --retry 3 --retry-delay 1 -o "$tmpfile" "https://raw.githubusercontent.com/${SIBLING}/${1}/src/lib/${2}" 2>/dev/null
+  local http_code
+
+  # Bust the raw.githubusercontent.com CDN cache - it holds responses, 404s included, for several minutes, which would otherwise defeat the grace-period
+  # recheck below by serving it the same stale answer.
+  http_code="$(curl -sSL --retry 3 --retry-delay 1 -H 'Cache-Control: no-cache' -w '%{http_code}' -o "$tmpfile" \
+    "https://raw.githubusercontent.com/${SIBLING}/${1}/src/lib/${2}?nocache=$(date +%s)${RANDOM}" 2>/dev/null)" || http_code="000"
+
+  case "$http_code" in
+    200) return 0 ;;
+    404) return 1 ;;
+    *)   return 2 ;;
+  esac
 }
 
 check_files() {
 
   status=0
 
+  local rc ref
+
   for file in "${FILES[@]}"; do
 
     # Prefer the same-named branch on the sibling so in-flight changes on both sides compare against each other, falling back to the default branch.
-    if fetch "$BRANCH" "$file"; then
-      ref="$BRANCH"
-    elif fetch "main" "$file"; then
+    fetch "$BRANCH" "$file" && rc=0 || rc=$?
+    ref="$BRANCH"
+
+    if [ "$rc" -eq 1 ]; then
+      fetch "main" "$file" && rc=0 || rc=$?
       ref="main"
-    else
+    fi
+
+    # Fetch failures must fail the run - treating an outage or rate limit as an absent file would silently skip the comparison.
+    if [ "$rc" -eq 2 ]; then
+      echo "ERROR src/lib/${file} could not be fetched from ${SIBLING}@${ref} - unable to verify sync"
+      status=1
+      continue
+    fi
+
+    if [ "$rc" -eq 1 ]; then
       echo "SKIP  src/lib/${file} (not present in ${SIBLING} on ${BRANCH} or main)"
       continue
     fi
@@ -56,7 +82,7 @@ check_files() {
 # arrives on the other side. On drift, give the sibling one grace period to catch up before failing.
 if ! check_files; then
 
-  echo "Drift detected - re-checking in 60 seconds in case the sibling repository's matching push is still in flight."
+  echo "Drift or fetch errors detected - re-checking in 60 seconds in case the sibling repository's matching push is still in flight."
   sleep 60
 
   check_files || exit 1

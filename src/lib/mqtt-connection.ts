@@ -28,6 +28,14 @@ const enum PacketType {
 // Keepalive interval, in seconds, that we advertise to the broker.
 const MQTT_KEEPALIVE = 60;
 
+// Handshake timeout, in milliseconds. A TCP endpoint that accepts our connection but never completes the MQTT handshake would otherwise hang us forever, since
+// the keepalive watchdog is only armed once CONNACK arrives.
+const MQTT_CONNECT_TIMEOUT = 10000;
+
+// The largest broker-declared packet we're willing to buffer. Our use case is small command and telemetry payloads - anything approaching this size is a broken
+// or hostile peer, and buffering the protocol maximum of 256 MB would be an easy way to exhaust memory on small Homebridge hosts.
+const MQTT_MAX_PACKET_SIZE = 16 * 1024 * 1024;
+
 // Options to configure the MQTT connection.
 export interface MqttConnectionOptions {
 
@@ -75,6 +83,8 @@ function encodeLength(length: number): Buffer {
 export class MqttConnection extends EventEmitter {
 
   private buffer: Buffer;
+  private connected: boolean;
+  private connectTimer: Nullable<NodeJS.Timeout>;
   private ended: boolean;
   private host: string;
   private keepaliveTimer: Nullable<NodeJS.Timeout>;
@@ -82,6 +92,7 @@ export class MqttConnection extends EventEmitter {
   private pendingPings: number;
   private password?: string;
   private port: number;
+  private queuedPackets: { body: Buffer; type: PacketType }[];
   private reconnectPeriod: number;
   private reconnectTimer: Nullable<NodeJS.Timeout>;
   private rejectUnauthorized: boolean;
@@ -108,10 +119,11 @@ export class MqttConnection extends EventEmitter {
 
     const protocol = url.protocol.replace(':', '');
 
-    // We support TCP and TLS transports only.
+    // We support TCP and TLS transports only. Notably, MQTT-over-WebSocket (ws:// and wss://) URLs are not supported - give those a distinct error so callers
+    // can explain the limitation rather than reporting the URL as malformed.
     if(!['mqtt', 'mqtts', 'ssl', 'tcp'].includes(protocol)) {
 
-      throw new Error('Missing protocol');
+      throw new Error('Unsupported protocol: ' + protocol);
     }
 
     this.useTls = ['mqtts', 'ssl'].includes(protocol);
@@ -121,10 +133,13 @@ export class MqttConnection extends EventEmitter {
     this.password = url.password ? decodeURIComponent(url.password) : undefined;
 
     this.buffer = Buffer.alloc(0);
+    this.connected = false;
+    this.connectTimer = null;
     this.ended = false;
     this.keepaliveTimer = null;
     this.packetId = 0;
     this.pendingPings = 0;
+    this.queuedPackets = [];
     this.reconnectPeriod = options.reconnectPeriod ?? 60000;
     this.reconnectTimer = null;
     this.rejectUnauthorized = options.rejectUnauthorized ?? true;
@@ -153,12 +168,18 @@ export class MqttConnection extends EventEmitter {
     this.socket = socket;
     this.buffer = Buffer.alloc(0);
 
+    // Guard the connection handshake with a timeout covering both the transport connection and the broker's CONNACK. Without it, an endpoint that accepts our
+    // TCP connection but never speaks MQTT would leave us hung forever, since the keepalive watchdog is only armed once CONNACK arrives.
+    this.connectTimer = setTimeout(() => {
+
+      this.connectTimer = null;
+      this.emitError(new Error('Timed out waiting for the MQTT broker to complete the connection handshake.'));
+      socket.destroy();
+    }, MQTT_CONNECT_TIMEOUT);
+
     socket.on('data', (data: Buffer) => this.processData(data));
 
-    socket.on('error', (error: Error) => {
-
-      this.emit('error', error);
-    });
+    socket.on('error', (error: Error) => this.emitError(error));
 
     socket.on('close', () => {
 
@@ -251,6 +272,15 @@ export class MqttConnection extends EventEmitter {
         }
       }
 
+      // A packet this large is a broken or hostile peer - don't buffer it.
+      if(length > MQTT_MAX_PACKET_SIZE) {
+
+        this.emitError(new Error('Invalid MQTT packet received: declared packet length ' + length + ' exceeds the maximum of ' + MQTT_MAX_PACKET_SIZE + '.'));
+        this.socket?.destroy();
+
+        return;
+      }
+
       // Wait for the complete packet to arrive.
       if(this.buffer.length < (offset + length)) {
 
@@ -277,18 +307,32 @@ export class MqttConnection extends EventEmitter {
         // Check the connect return code.
         if(packet[1] !== 0) {
 
-          this.emit('error', Object.assign(new Error('Connection refused by the MQTT broker: return code ' + packet[1] + '.'), { code: 'ECONNREFUSED' }));
+          this.emitError(Object.assign(new Error('Connection refused by the MQTT broker: return code ' + packet[1] + '.'), { code: 'ECONNREFUSED' }));
           this.socket?.destroy();
 
           return;
         }
 
-        // We're connected. Restore any subscriptions we had and start our keepalive heartbeat.
+        // We're connected. Restore any subscriptions we had, start our keepalive heartbeat, and flush any packets that were queued while the handshake was in
+        // flight. Queued SUBSCRIBEs never exist - subscriptions made before now are captured in subscribedTopics and covered by the restoration loop below.
+        this.connected = true;
+
+        if(this.connectTimer) {
+
+          clearTimeout(this.connectTimer);
+          this.connectTimer = null;
+        }
+
         this.startKeepalive();
 
         for(const topic of this.subscribedTopics) {
 
           this.sendSubscribe(topic);
+        }
+
+        for(const queued of this.queuedPackets.splice(0)) {
+
+          this.writePacket(queued.type, queued.body);
         }
 
         this.emit('connect');
@@ -298,6 +342,17 @@ export class MqttConnection extends EventEmitter {
       case PacketType.PUBLISH & 0xF0: {
 
         const qos = (header >> 1) & 0x03;
+
+        // Validate the encoded lengths before decoding - a truncated or malformed packet from the broker must never crash us. We log it, drop the connection,
+        // and let our reconnection logic recover.
+        if((packet.length < 2) || ((2 + packet.readUInt16BE(0) + ((qos > 0) ? 2 : 0)) > packet.length)) {
+
+          this.emitError(new Error('Invalid MQTT packet received: malformed PUBLISH packet.'));
+          this.socket?.destroy();
+
+          return;
+        }
+
         const topicLength = packet.readUInt16BE(0);
         const topic = packet.subarray(2, 2 + topicLength).toString('utf8');
         let payloadStart = 2 + topicLength;
@@ -363,12 +418,33 @@ export class MqttConnection extends EventEmitter {
     }
   }
 
+  // Emit an error event, but only when someone is listening. An unlistened error event would throw and take down the entire process - this connection
+  // auto-reconnects in the background for the life of the process, so transport errors must never be fatal on their own.
+  private emitError(error: Error): void {
+
+    if(this.listenerCount('error')) {
+
+      this.emit('error', error);
+    }
+  }
+
   // Cleanup our socket state after a disconnect.
   private teardownSocket(): void {
+
+    if(this.connectTimer) {
+
+      clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+    }
 
     this.stopKeepalive();
     this.socket?.removeAllListeners();
     this.socket = null;
+    this.connected = false;
+
+    // Drop anything still queued for the handshake that never completed - subscriptions are restored from subscribedTopics when we reconnect, and QoS 0
+    // publishes carry no delivery guarantee across connections.
+    this.queuedPackets = [];
   }
 
   // Schedule a reconnection attempt, if we haven't been shutdown.
@@ -397,6 +473,26 @@ export class MqttConnection extends EventEmitter {
     this.socket.write(Buffer.concat([ Buffer.from([ type ]), encodeLength(body.length), body ]));
   }
 
+  // Write an application packet to the broker, queueing it if the connection handshake hasn't completed yet. CONNECT must be the first packet on the wire
+  // [MQTT-3.1.0-1], so anything issued before CONNACK is accepted is held back and flushed once the session is established. With no connection attempt in
+  // flight, packets are dropped, matching our QoS 0 semantics while we wait to reconnect.
+  private writeApplicationPacket(type: PacketType, body: Buffer): void {
+
+    if(!this.socket || this.socket.destroyed) {
+
+      return;
+    }
+
+    if(!this.connected) {
+
+      this.queuedPackets.push({ body, type });
+
+      return;
+    }
+
+    this.writePacket(type, body);
+  }
+
   // Return the next packet identifier to use for SUBSCRIBE and UNSUBSCRIBE packets.
   private nextPacketId(): Buffer {
 
@@ -420,21 +516,26 @@ export class MqttConnection extends EventEmitter {
 
     const payload = Buffer.isBuffer(message) ? message : Buffer.from(message, 'utf8');
 
-    this.writePacket(PacketType.PUBLISH, Buffer.concat([ encodeString(topic), payload ]));
+    this.writeApplicationPacket(PacketType.PUBLISH, Buffer.concat([ encodeString(topic), payload ]));
   }
 
-  // Subscribe to a topic at QoS 0. Subscriptions are automatically restored when we reconnect.
+  // Subscribe to a topic at QoS 0. Subscriptions are automatically restored when we reconnect, and subscriptions made before the connection handshake completes
+  // are established by that same restoration pass once CONNACK arrives.
   public subscribe(topic: string): void {
 
     this.subscribedTopics.add(topic);
-    this.sendSubscribe(topic);
+
+    if(this.connected) {
+
+      this.sendSubscribe(topic);
+    }
   }
 
   // Unsubscribe from a topic.
   public unsubscribe(topic: string): void {
 
     this.subscribedTopics.delete(topic);
-    this.writePacket(PacketType.UNSUBSCRIBE, Buffer.concat([ this.nextPacketId(), encodeString(topic) ]));
+    this.writeApplicationPacket(PacketType.UNSUBSCRIBE, Buffer.concat([ this.nextPacketId(), encodeString(topic) ]));
   }
 
   // End the connection to the broker. When force is set, the socket is destroyed immediately.
@@ -455,7 +556,8 @@ export class MqttConnection extends EventEmitter {
       return;
     }
 
-    if(force) {
+    // Before the handshake completes, DISCONNECT can't be sent - CONNECT must be the first packet on the wire - so tear the socket down directly.
+    if(force || !this.connected) {
 
       this.socket.destroy();
 

@@ -40,7 +40,7 @@ function encodeFrame(opcode: number, payload: Buffer, fin = true): Buffer {
 }
 
 // Decode masked client-to-server frames from a raw stream buffer.
-function decodeClientFrames(buffer: Buffer): { opcode: number; payload: Buffer }[] {
+function decodeClientFrames(buffer: Buffer): { isMasked: boolean; opcode: number; payload: Buffer }[] {
 
   const frames = [];
   let offset = 0;
@@ -85,7 +85,7 @@ function decodeClientFrames(buffer: Buffer): { opcode: number; payload: Buffer }
       }
     }
 
-    frames.push({ opcode, payload });
+    frames.push({ isMasked, opcode, payload });
     offset = position + length;
   }
 
@@ -262,7 +262,7 @@ describe('WebSocketClient', () => {
     ws.send('client-hello');
     ws.send(Buffer.from([ 1, 2, 3 ]));
 
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await vi.waitFor(() => expect(decodeClientFrames(serverInbound).length).toBeGreaterThanOrEqual(3));
 
     const frames = decodeClientFrames(serverInbound);
 
@@ -273,9 +273,61 @@ describe('WebSocketClient', () => {
     expect(pong?.payload.toString()).toBe('pingpayload');
     expect(text?.payload.toString()).toBe('client-hello');
     expect(binary?.payload).toEqual(Buffer.from([ 1, 2, 3 ]));
+
+    // Every client-to-server frame must be masked - an unmasked client frame is an RFC 6455 violation that servers are required to reject.
+    expect(frames.length).toBeGreaterThanOrEqual(3);
+    expect(frames.every(frame => frame.isMasked)).toBe(true);
   });
 
-  it('completes a client-initiated close handshake', async () => {
+  it('sends heartbeat pings and stays connected while the server answers', async () => {
+
+    // Answer every inbound frame with a pong so the connection stays live across heartbeat intervals.
+    onUpgraded = (socket): void => {
+
+      socket.on('data', () => socket.write(encodeFrame(0xA, Buffer.alloc(0))));
+    };
+
+    const ws = await connect({ heartbeatInterval: 100 });
+
+    // Wait for multiple heartbeat pings to hit the wire - the pongs they elicit keep the watchdog satisfied.
+    await vi.waitFor(() => expect(decodeClientFrames(serverInbound).filter(frame => frame.opcode === 0x9).length).toBeGreaterThanOrEqual(2), { timeout: 2000 });
+
+    expect(ws.readyState).toBe(WebSocketClient.OPEN);
+  });
+
+  it('detects a dead peer through the heartbeat and closes the connection', async () => {
+
+    // The server never sends a frame after the handshake, so the heartbeat watchdog must declare the connection dead and close it.
+    const ws = await connect({ heartbeatInterval: 100 });
+
+    await once(ws, 'close');
+
+    expect(ws.readyState).toBe(WebSocketClient.CLOSED);
+
+    // The watchdog pinged the peer before giving up on it.
+    expect(decodeClientFrames(serverInbound).some(frame => frame.opcode === 0x9)).toBe(true);
+  });
+
+  it('completes a client-initiated close handshake when the server echoes the close', async () => {
+
+    // Echo the client's close frame back, completing the handshake, then finish the TCP shutdown.
+    onUpgraded = (socket): void => {
+
+      let inbound = Buffer.alloc(0);
+
+      socket.on('data', (data: Buffer) => {
+
+        inbound = Buffer.concat([ inbound, data ]);
+
+        const close = decodeClientFrames(inbound).find(frame => frame.opcode === 0x8);
+
+        if(close) {
+
+          socket.write(encodeFrame(0x8, close.payload));
+          socket.end();
+        }
+      });
+    };
 
     const ws = await connect();
 
@@ -286,6 +338,50 @@ describe('WebSocketClient', () => {
     await closed;
 
     expect(ws.readyState).toBe(WebSocketClient.CLOSED);
+
+    // The client must have sent a close frame carrying the normal closure code.
+    const clientClose = decodeClientFrames(serverInbound).find(frame => frame.opcode === 0x8);
+
+    expect(clientClose?.payload.readUInt16BE(0)).toBe(1000);
+  });
+
+  it('falls back to destroying the socket when the server never completes the close handshake', async () => {
+
+    const ws = await connect();
+
+    const closed = once(ws, 'close');
+
+    // The mock server never echoes the close frame, so the client must force the close via its fallback timer rather than hanging in CLOSING.
+    ws.close();
+
+    await closed;
+
+    expect(ws.readyState).toBe(WebSocketClient.CLOSED);
+  });
+
+  it('acknowledges and completes a server-initiated close handshake', async () => {
+
+    onUpgraded = (socket): void => {
+
+      const payload = Buffer.alloc(2);
+
+      payload.writeUInt16BE(1000, 0);
+      socket.write(encodeFrame(0x8, payload));
+      socket.end();
+    };
+
+    const ws = new WebSocketClient(url);
+
+    clients.push(ws);
+
+    await once(ws, 'close');
+
+    expect(ws.readyState).toBe(WebSocketClient.CLOSED);
+
+    // The client must have echoed the close frame back to the server.
+    const clientClose = decodeClientFrames(serverInbound).find(frame => frame.opcode === 0x8);
+
+    expect(clientClose?.payload.readUInt16BE(0)).toBe(1000);
   });
 
   it('enforces the maximum payload cap', async () => {
@@ -322,5 +418,67 @@ describe('WebSocketClient', () => {
     const [ error ] = await once(ws, 'error') as [ Error ];
 
     expect(error.message).toContain('maximum allowed size');
+  });
+
+  it('does not count interleaved control frames against the fragmented message cap', async () => {
+
+    const messages: (string | Buffer)[] = [];
+
+    onUpgraded = (socket): void => {
+
+      // A ping arriving between fragments must not contribute to the fragmented message's size accounting - 60 + 50 would breach the 100-byte cap.
+      socket.write(encodeFrame(0x1, Buffer.alloc(60, 97), false));
+      socket.write(encodeFrame(0x9, Buffer.alloc(50, 98)));
+      socket.write(encodeFrame(0x0, Buffer.alloc(30, 99)));
+    };
+
+    const ws = new WebSocketClient(url, { maxPayload: 100 });
+
+    clients.push(ws);
+    ws.on('message', (message: string | Buffer) => messages.push(message));
+    ws.on('error', () => {});
+
+    await vi.waitFor(() => expect(messages.length).toBe(1));
+
+    expect(messages[0]).toBe('a'.repeat(60) + 'c'.repeat(30));
+    expect(ws.readyState).toBe(WebSocketClient.OPEN);
+  });
+
+  it('fails the connection on a continuation frame with no message in progress', async () => {
+
+    onUpgraded = (socket): void => {
+
+      socket.write(encodeFrame(0x0, Buffer.from('orphan')));
+    };
+
+    const ws = new WebSocketClient(url);
+
+    clients.push(ws);
+
+    const [ error ] = await once(ws, 'error') as [ Error ];
+
+    expect(error.message).toContain('continuation');
+    expect(ws.readyState).toBe(WebSocketClient.CLOSED);
+  });
+
+  it('drops an unfinished fragmented message when a new data frame arrives', async () => {
+
+    const messages: (string | Buffer)[] = [];
+
+    onUpgraded = (socket): void => {
+
+      // An unfinished fragmented message interrupted by a self-contained frame - the stale fragments must not leak into any delivered message.
+      socket.write(encodeFrame(0x1, Buffer.from('stale'), false));
+      socket.write(encodeFrame(0x1, Buffer.from('fresh')));
+    };
+
+    const ws = new WebSocketClient(url);
+
+    clients.push(ws);
+    ws.on('message', (message: string | Buffer) => messages.push(message));
+
+    await vi.waitFor(() => expect(messages.length).toBe(1));
+
+    expect(messages[0]).toBe('fresh');
   });
 });

@@ -269,8 +269,8 @@ class PluginUiServer extends HomebridgePluginUiServer {
           warn: () => {},
         };
 
-        // Connect to the Protect controller.
-        ufpApi = new ProtectApi(log);
+        // Connect to the Protect controller, honoring the controller's TLS validation preference.
+        ufpApi = new ProtectApi(log, { verifyTls: controller.verifyTls === true });
 
         // Race the login + bootstrap against a timeout so the webUI fails visibly instead of hanging on "Validating..." for the full ~2-minute internal
         // unifi-protect retry budget when the controller is unreachable or slow.

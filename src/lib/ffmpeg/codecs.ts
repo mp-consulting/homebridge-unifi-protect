@@ -408,8 +408,9 @@ export class FfmpegCodecs {
   // Identify what hardware and operating system environment we're actually running on.
   private probeHwOs(): void {
 
-    // Retrieve the CPU model string once to avoid repeated allocations from cpus().
-    const cpuModelString = cpus()[0].model;
+    // Retrieve the CPU model string once to avoid repeated allocations from cpus(). os.cpus() is documented to return an empty array in some containerized
+    // environments - in that case we fall back to an empty model string and the host system degrades to generic.
+    const cpuModelString = cpus()[0]?.model ?? '';
 
     // Take a look at the platform we're on for an initial hint of what we are.
     switch(platform) {

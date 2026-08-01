@@ -21,7 +21,7 @@
  *
  * @module
  */
-import { AudioRecordingCodecType, AudioRecordingSamplerate, type CameraRecordingConfiguration } from 'homebridge';
+import { AudioRecordingCodecType, AudioRecordingSamplerate, type CameraRecordingConfiguration, type StreamRequestCallback } from 'homebridge';
 import { HKSV_IDR_INTERVAL, HKSV_TIMEOUT } from './settings.js';
 import { type Nullable, type PartialWithId, runWithTimeout } from '../util.js';
 import { BOX_HEADER_SIZE } from './fmp4.js';
@@ -184,6 +184,9 @@ export interface FMp4LivestreamOptions extends FMp4BaseOptions {
  */
 abstract class FfmpegFMp4Process extends FfmpegProcess {
 
+  // Latch ensuring the close event fires at most once per process lifecycle - stop() can be invoked multiple times for the same process.
+  private hasEmittedClose: boolean;
+
   private isLoggingErrors: boolean;
 
   // The HomeKit recording configuration and resolved base options are stored as protected fields so subclass hook methods can reference them without needing
@@ -205,6 +208,9 @@ abstract class FfmpegFMp4Process extends FfmpegProcess {
 
     // Initialize our parent.
     super(ffmpegOptions);
+
+    // We haven't emitted a close event yet for this lifecycle.
+    this.hasEmittedClose = false;
 
     // We want to log errors when they occur.
     this.isLoggingErrors = true;
@@ -363,6 +369,10 @@ abstract class FfmpegFMp4Process extends FfmpegProcess {
 
     let dataListener: (buffer: Buffer) => void;
 
+    // Capture the child we're configuring - the parent's exit handler nulls the shared process reference before our own exit listener runs, and on a reused
+    // instance the shared reference may already point at a newly started process.
+    const childProcess = this.process;
+
     // Call our parent to get started.
     super.configureProcess();
 
@@ -374,7 +384,7 @@ abstract class FfmpegFMp4Process extends FfmpegProcess {
 
     // Process FFmpeg output and parse out the fMP4 stream it's generating. Here, we take on the task of parsing the fMP4 stream that's being generated and
     // split it up into the MP4 boxes that HAP-NodeJS is ultimately expecting.
-    this.process?.stdout.on('data', dataListener = (buffer: Buffer): void => {
+    childProcess?.stdout.on('data', dataListener = (buffer: Buffer): void => {
 
       // If we have anything left from the last buffer we processed, prepend it to this buffer.
       if(bufferRemaining.length > 0) {
@@ -407,6 +417,17 @@ abstract class FfmpegFMp4Process extends FfmpegProcess {
 
           // Now we retrieve the length of the box.
           dataLength = header.readUInt32BE(0);
+
+          // A valid box must be at least the header size. Anything smaller - zero-size, open-ended (size 0), or extended-size (size 1) boxes - would leave
+          // this loop unable to advance, so we treat the stream as fatally corrupt and shut the process down.
+          if(dataLength < BOX_HEADER_SIZE) {
+
+            this.log.error('Invalid fMP4 box size (%s) detected in the FFmpeg output stream. Ending this session.', dataLength);
+            childProcess?.stdout.off('data', dataListener);
+            this.stop();
+
+            return;
+          }
 
           // Read the box type as a 32-bit integer to avoid per-box string allocation. Box types are 4-byte ASCII codes ("moof", "mdat", etc.) - a legacy of
           // Apple's original QuickTime "atoms" from 1991, carried forward when MPEG-4 Part 12 standardized the container as ISO BMFF and renamed atoms to
@@ -455,10 +476,20 @@ abstract class FfmpegFMp4Process extends FfmpegProcess {
     });
 
     // Make sure we cleanup our listeners when we're done.
-    this.process?.once('exit', () => {
+    childProcess?.once('exit', () => {
 
-      this.process?.stdout.off('data', dataListener);
+      childProcess.stdout.off('data', dataListener);
     });
+  }
+
+  /**
+   * Starts the FFmpeg process. Re-arms the close event latch so a reused instance can emit close again for its new process lifecycle.
+   */
+  public start(commandLineArgs?: string[], callback?: StreamRequestCallback, errorHandler?: (errorMessage: string) => Promise<void> | void): void {
+
+    this.hasEmittedClose = false;
+
+    super.start(commandLineArgs, callback, errorHandler);
   }
 
   /**
@@ -470,9 +501,14 @@ abstract class FfmpegFMp4Process extends FfmpegProcess {
     // Call our parent to get started.
     super.stopProcess();
 
-    // Signal that the process has ended.
+    // Signal that the process has ended. The close event must fire at most once per process lifecycle, no matter how many times we're stopped.
     this._isEnded = true;
-    this.emit('close');
+
+    if(!this.hasEmittedClose) {
+
+      this.hasEmittedClose = true;
+      this.emit('close');
+    }
   }
 
   /**
@@ -901,6 +937,12 @@ export class FfmpegLivestreamProcess extends FfmpegFMp4Process {
    * ```
    */
   public start(): void {
+
+    // Reset the initialization segment state so a restarted process's ftyp/moov boxes are captured anew rather than being emitted as media segments, and so
+    // stale initialization data from the previous process is never served.
+    this.hasInitSegment = false;
+    this._initSegment = EMPTY_BUFFER;
+    this._initSegmentParts = [];
 
     if(this.segmentLength !== undefined) {
 

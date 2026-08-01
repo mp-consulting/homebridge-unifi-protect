@@ -162,4 +162,17 @@ describe('HomebridgePluginUiServer', () => {
     expect(response.payload.success).toBe(false);
     expect(response.payload.data).toMatchObject({ error: { code: 'EBADINPUT' }, message: 'bad input' });
   });
+
+  it('returns Not Found for paths that collide with Object.prototype property names', async () => {
+
+    const server = new HomebridgePluginUiServer();
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = await roundTrip(server, 'toString');
+
+    errorSpy.mockRestore();
+
+    expect(response.payload.success).toBe(false);
+    expect(response.payload.data).toMatchObject({ message: 'Not Found', path: 'toString' });
+  });
 });

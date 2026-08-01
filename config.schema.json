@@ -300,7 +300,8 @@
                   "description": "These settings are optional. The defaults work well for almost everyone.",
                   "items": [
                     "controllers[].name",
-                    "controllers[].overrideAddress"
+                    "controllers[].overrideAddress",
+                    "controllers[].verifyTls"
                   ]
                 }
               ]

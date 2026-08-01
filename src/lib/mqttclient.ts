@@ -50,19 +50,16 @@ export class MqttClient {
 
       if(error instanceof Error) {
 
-        switch(error.message) {
+        if(error.message === 'Missing protocol') {
 
-          case 'Missing protocol':
+          this.log.error('MQTT Broker: Invalid URL provided: %s.', this.brokerUrl);
+        } else if(error.message.startsWith('Unsupported protocol')) {
 
-            this.log.error('MQTT Broker: Invalid URL provided: %s.', this.brokerUrl);
+          this.log.error('MQTT Broker: %s. Only mqtt://, mqtts://, tcp://, and ssl:// broker URLs are supported: %s.', error.message.replace(/\.$/, ''),
+            this.brokerUrl);
+        } else {
 
-            break;
-
-          default:
-
-            this.log.error('MQTT Broker: Error: %s.', error.message);
-
-            break;
+          this.log.error('MQTT Broker: Error: %s.', error.message);
         }
       }
     }

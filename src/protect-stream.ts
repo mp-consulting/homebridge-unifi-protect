@@ -950,7 +950,20 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
         if(!seenInitSegment) {
 
-          processSegmentQueue(tsBuffer ?? (await livestream.getInitSegment()));
+          // getInitSegment() rejects if the livestream is stopped before the initialization segment arrives. Since we're in a void-invoked event listener, a
+          // rejection here would otherwise surface as an unhandled rejection - without an initialization segment there's nothing valid to feed FFmpeg, so we
+          // end the session instead.
+          const initSegment = tsBuffer ?? (await livestream.getInitSegment().catch(() => null));
+
+          if(!initSegment) {
+
+            this.log.error('Unable to retrieve the fMP4 initialization segment for this streaming session.');
+            ffmpegStream.ffmpegProcess?.stdin.end();
+
+            return;
+          }
+
+          processSegmentQueue(initSegment);
           seenInitSegment = true;
         }
 
@@ -1019,8 +1032,9 @@ export class ProtectStreamingDelegate implements HomebridgeStreamingDelegate {
 
       if(sessionInfo.talkBack && !this.protectCamera.hints.twoWayAudioDirect) {
 
-        // Open the talkback connection.
-        ws = new WebSocketClient(sessionInfo.talkBack, { rejectUnauthorized: false });
+        // Open the talkback connection. Certificate validation follows the API's verifyTls setting, which defaults to off since Protect controllers ship with
+        // self-signed certificates.
+        ws = new WebSocketClient(sessionInfo.talkBack, { rejectUnauthorized: this.nvr.ufpApi.verifyTls });
         isTalkbackLive = true;
 
         // Catch any errors and inform the user, if needed.

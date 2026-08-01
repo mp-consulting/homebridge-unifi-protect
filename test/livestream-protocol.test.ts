@@ -400,24 +400,24 @@ describe('ProtectLivestream', () => {
     expect((await timestampEvent)[0]).toEqual([ 90000, 180000 ]);
   });
 
-  it('logs an error on an invalid packet header and recovers on the next message', async () => {
+  it('tears down the connection and emits close on an invalid packet header', async () => {
 
     const { conn, livestream } = await startSession();
 
-    const codecEvents = record(livestream, 'codec');
+    const closeEvents = record(livestream, 'close');
 
-    // Packet type 42 isn't a valid livestream frame type.
+    // Packet type 42 isn't a valid livestream frame type. Losing framing sync with the stream is unrecoverable, so the connection must be torn down rather
+    // than left permanently desynced.
     conn.sendPackets(livePacket(42, Buffer.from('garbage')));
 
     await vi.waitFor(() => expect(log.error).toHaveBeenCalledWith(expect.stringContaining('Invalid header'), 42));
 
-    // A subsequent, well-formed message must still be processed.
-    conn.sendPackets(livePacket(FRAME.CODECINFORMATION, Buffer.from('avc1,mp4a')));
-
-    await vi.waitFor(() => expect(codecEvents).toEqual([ 'avc1,mp4a' ]));
+    // The desync must surface as a single close event and initiate the closing handshake so consumers and watchdogs can recover deterministically.
+    await vi.waitFor(() => expect(closeEvents.length).toBe(1));
+    await vi.waitFor(() => expect(conn.sawClientClose).toBe(true));
   });
 
-  it('a manual stop closes the websocket without emitting close and suppresses further events', async () => {
+  it('a manual stop closes the websocket, emits close exactly once, and suppresses further events', async () => {
 
     const { conn, livestream } = await startSession();
 
@@ -437,17 +437,57 @@ describe('ProtectLivestream', () => {
 
     livestream.stop();
 
+    // Stopping an active session must emit close exactly once, and a redundant stop must not emit another.
+    expect(closeEvents.length).toBe(1);
+
+    livestream.stop();
+
+    expect(closeEvents.length).toBe(1);
+
     // The client must have initiated the closing handshake.
     await vi.waitFor(() => expect(conn.sawClientClose).toBe(true));
 
-    // Traffic arriving after a manual stop must not surface as events.
+    // Traffic arriving after a manual stop must not surface as events. Ending the server socket afterward gives us a deterministic settling point - by the
+    // time the transport has fully wound down, the late packet has certainly been delivered to (and, if mishandled, processed by) the client.
     conn.sendPackets(livePacket(FRAME.INITSEGMENT, Buffer.from('late-init')));
+    conn.socket.end();
 
-    await new Promise(resolve => setTimeout(resolve, 150));
+    await vi.waitFor(() => expect(conn.socket.destroyed).toBe(true));
 
     expect(messageEvents.length).toBe(0);
-    expect(closeEvents.length).toBe(0);
+    expect(closeEvents.length).toBe(1);
     expect(livestream.initSegment).toBeNull();
+  });
+
+  it('emits close exactly once when the websocket connection errors', async () => {
+
+    const { conn, livestream } = await startSession();
+
+    // Wait for a first roundtrip so we know the client-side handshake has fully completed before severing the connection.
+    const codecEvent = once(livestream, 'codec');
+
+    conn.sendPackets(livePacket(FRAME.CODECINFORMATION, Buffer.from('avc1,mp4a')));
+
+    await codecEvent;
+
+    const closeEvents = record(livestream, 'close');
+    const pendingInit = livestream.getInitSegment();
+
+    // Attach a rejection handler up front so the abort can't surface as an unhandled rejection.
+    pendingInit.catch(() => {});
+
+    // Sever the connection abruptly with an RST, which surfaces as a socket error on the client.
+    conn.socket.resetAndDestroy();
+
+    // The error path must still emit close - exactly once - and reject any pending init segment request.
+    await vi.waitFor(() => expect(closeEvents.length).toBe(1));
+
+    await expect(pendingInit).rejects.toMatchObject({ name: 'AbortError' });
+
+    // A subsequent stop must not emit a second close.
+    livestream.stop();
+
+    expect(closeEvents.length).toBe(1);
   });
 
   it('a server-initiated close emits close and rejects a pending init segment request', async () => {

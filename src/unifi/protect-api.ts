@@ -58,6 +58,14 @@ const PROTECT_API_RETRY_INTERVAL = 300;
 // Protect API response timeout, in milliseconds. This should never be greater than 5000 ms.
 const PROTECT_API_TIMEOUT = 3500;
 
+// Heartbeat interval, in milliseconds, for the realtime events WebSocket. If no traffic is seen within this interval, the connection is presumed dead and torn
+// down so it can be reestablished.
+const PROTECT_EVENTS_HEARTBEAT_INTERVAL = 30000;
+
+// Delay, in milliseconds, before attempting to reconnect the realtime events WebSocket after it closes. This shrinks the event blackout that would otherwise
+// last until the next periodic bootstrap refresh.
+const PROTECT_EVENTS_RECONNECT_DELAY = 5000;
+
 // Protect controller status codes that indicate transient server-side issues. These should be kept in sync with the transparent retry policy that we hand to
 // request() in _retrieve, which retries on a subset of these codes before _retrieve ever sees them.
 //
@@ -191,6 +199,7 @@ export class ProtectApi extends EventEmitter {
   private agent: Nullable<https.Agent>;
   private apiErrorCount: number;
   private apiThrottleStart: number;
+  private eventsReconnectTimer: Nullable<NodeJS.Timeout>;
   private headers: Record<string, string>;
   private _isAdminUser: boolean;
   private _isThrottled: boolean;
@@ -247,6 +256,7 @@ export class ProtectApi extends EventEmitter {
     this.agent = null;
     this.apiErrorCount = 0;
     this.apiThrottleStart = 0;
+    this.eventsReconnectTimer = null;
     this.headers = {};
     this.nvrAddress = '';
     this.password = '';
@@ -455,10 +465,11 @@ export class ProtectApi extends EventEmitter {
 
     try {
 
-      // Let's open the WebSocket connection, passing our authentication cookie and explicitly allowing the self-signed TLS certificates that Protect
-      // controllers ship with by default.
+      // Let's open the WebSocket connection, passing our authentication cookie. Certificate validation follows our verifyTls setting, which defaults to off
+      // since Protect controllers ship with self-signed certificates. The heartbeat detects connections that die without a FIN or RST - without it, a silently
+      // dead socket would leave us listening forever on a connection that will never deliver another event.
       const ws = new WebSocketClient('wss://' + this.nvrAddress + '/proxy/protect/ws/updates?' + params.toString(),
-        { headers: { Cookie: this.headers.cookie ?? '' }, rejectUnauthorized: this._verifyTls });
+        { headers: { Cookie: this.headers.cookie ?? '' }, heartbeatInterval: PROTECT_EVENTS_HEARTBEAT_INTERVAL, rejectUnauthorized: this._verifyTls });
 
       // Handle any WebSocket errors. A single once handler covers both the connection phase and the post-connection lifetime...the first error on the WebSocket
       // triggers logging, closes the connection, and the close event handles cleanup.
@@ -500,11 +511,29 @@ export class ProtectApi extends EventEmitter {
       // Make the WebSocket available.
       this._eventsWs = ws;
 
-      // Cleanup after ourselves if our WebSocket closes for some reason.
+      // Cleanup after ourselves if our WebSocket closes for some reason. We guard on identity - a delayed close event from a superseded socket must not null
+      // out a newer live socket, which would otherwise allow duplicate concurrent event connections and doubled events.
       ws.once('close', () => {
 
-        this._eventsWs = null;
         ws.removeAllListeners();
+
+        if(this._eventsWs !== ws) {
+
+          return;
+        }
+
+        this._eventsWs = null;
+
+        // Schedule a single reconnect attempt if we're still logged in, rather than waiting for the next periodic bootstrap refresh to notice the outage. The
+        // timer guard ensures overlapping close events can't stack reconnect attempts, and reset() cancels any pending attempt.
+        if(this.headers.cookie && this.headers['x-csrf-token'] && !this.eventsReconnectTimer) {
+
+          this.eventsReconnectTimer = setTimeout(() => {
+
+            this.eventsReconnectTimer = null;
+            void this.launchEventsWs();
+          }, PROTECT_EVENTS_RECONNECT_DELAY);
+        }
       });
 
       // Emit queue for ordered event delivery. Packet decoding is async (zlib inflate runs on the libuv threadpool), so multiple packets can be inflating
@@ -643,6 +672,12 @@ export class ProtectApi extends EventEmitter {
    */
   public async getSnapshot(device: ProtectCameraConfig,
     options: Partial<{ width: number, height: number, usePackageCamera: boolean }> = {}): Promise<Nullable<Buffer>> {
+
+    // Log us in if needed.
+    if(!(await this.loginController())) {
+
+      return null;
+    }
 
     // We're requesting a package camera snapshot on a camera without one - we're done.
     if(options.usePackageCamera && !device.featureFlags.hasPackageCamera) {
@@ -921,8 +956,19 @@ export class ProtectApi extends EventEmitter {
 
     this._bootstrap = null;
 
-    this._eventsWs?.close();
+    // Detach the events WebSocket before closing it - close can emit synchronously, and the close handler must not see this socket as live or schedule a
+    // reconnect attempt mid-reset.
+    const eventsWs = this._eventsWs;
+
     this._eventsWs = null;
+    eventsWs?.close();
+
+    // Cancel any pending events WebSocket reconnect attempt so a reset can't be undone by a stale timer.
+    if(this.eventsReconnectTimer) {
+
+      clearTimeout(this.eventsReconnectTimer);
+      this.eventsReconnectTimer = null;
+    }
 
     if(this.nvrAddress) {
 
@@ -1152,16 +1198,16 @@ export class ProtectApi extends EventEmitter {
 
       // Execute the API request. We intentionally use our own headers so that every request uses our authenticated session (cookie, CSRF token) and connection
       // pool. The caller controls the method and body...we own the transport and identity. Transient server-side failures are retried transparently with
-      // exponential backoff. PATCH is deliberately excluded from the retries...the Protect API isn't documented and we don't trust that PATCH is idempotent on
-      // the controller side. A silent retry could leave us with duplicate side effects we can't see. PATCH failures bubble up through our own error counting
-      // instead, so the caller gets to decide what to do about it.
+      // exponential backoff. PATCH and POST are deliberately excluded from the retries...the Protect API isn't documented and we don't trust that either is
+      // idempotent on the controller side. A silent retry could leave us with duplicate side effects we can't see. PATCH and POST failures bubble up through
+      // our own error counting instead, so the caller gets to decide what to do about it.
       response = await request(url, {
 
         agent: this.agent ?? undefined,
         body: options.body,
         headers: this.headers,
         method: options.method ?? 'GET',
-        retry: (options.method === 'PATCH') ? undefined :
+        retry: ((options.method === 'PATCH') || (options.method === 'POST')) ? undefined :
           { factor: 2, maxRetries: 5, maxTimeout: 1500, minTimeout: 100, statusCodes: [ 429, 500, 502, 503, 504 ] },
         signal: controller.signal,
       });

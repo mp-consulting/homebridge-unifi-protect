@@ -33,11 +33,12 @@ export class RequestError extends Error {
  */
 export class HomebridgePluginUiServer {
 
-  private handlers: { [path: string]: (payload: never) => unknown | Promise<unknown> };
+  // Registered request handlers, keyed by path. A Map keeps lookups honest for paths that collide with Object.prototype property names.
+  private handlers: Map<string, (payload: never) => unknown | Promise<unknown>>;
 
   constructor() {
 
-    this.handlers = {};
+    this.handlers = new Map();
 
     // We can only operate as a child process of the Homebridge UI.
     if(!process.send) {
@@ -46,6 +47,18 @@ export class HomebridgePluginUiServer {
       console.error('This script can only run as a child process.');
       process.exit(1);
     }
+
+    // Terminate when our parent goes away so we can't linger as an orphan: if the Homebridge UI dies while we still hold live handles (an in-flight discovery
+    // scan, keep-alive sockets), nothing else would ever end this process. The timer is unref'd so it never holds an otherwise-idle process open on its own.
+    // Upstream installs its watchdog at module scope, but our module is re-exported through the shared library barrel that the main plugin imports, where
+    // process.connected is undefined and the module-scope form would terminate Homebridge itself - installing it here scopes it to a UI server child process.
+    setInterval(() => {
+
+      if(!process.connected) {
+
+        process.kill(process.pid, 'SIGTERM');
+      }
+    }, 10 * 1000).unref();
 
     process.addListener('message', (request: UiServerRequest) => {
 
@@ -100,10 +113,12 @@ export class HomebridgePluginUiServer {
   // Process an inbound request from the Homebridge UI, dispatching it to the registered handler for the request path.
   private async processRequest(request: UiServerRequest): Promise<void> {
 
-    // No handler for this path - we're done.
-    if(!this.handlers[request.path]) {
+    const handler = this.handlers.get(request.path);
 
-       
+    // No handler for this path - we're done.
+    if(!handler) {
+
+
       console.error('No Registered Handler:', request.path);
 
       this.sendResponse(request, { message: 'Not Found', path: request.path }, false);
@@ -113,10 +128,10 @@ export class HomebridgePluginUiServer {
 
     try {
 
-       
+
       console.log('Incoming Request:', request.path);
 
-      const response = await this.handlers[request.path]((request.body ?? {}) as never);
+      const response = await handler((request.body ?? {}) as never);
 
       this.sendResponse(request, response, true);
     } catch(error) {
@@ -152,6 +167,20 @@ export class HomebridgePluginUiServer {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   public onRequest(path: string, fn: (payload: any) => unknown | Promise<unknown>): void {
 
-    this.handlers[path] = fn;
+    this.handlers.set(path, fn);
+  }
+
+  // Push an event with data to the UI, for consumption through homebridge.addEventListener in the custom UI's client-side code.
+  public pushEvent(event: string, data: unknown): void {
+
+    process.send?.({
+
+      action: 'stream',
+      payload: {
+
+        data: data,
+        event: event,
+      },
+    });
   }
 }

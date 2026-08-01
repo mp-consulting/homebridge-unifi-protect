@@ -72,7 +72,7 @@ function requestOnce(url: string, options: RequestOptions): Promise<RequestRespo
           body: {
 
             arrayBuffer: (): Promise<ArrayBuffer> => Promise.resolve(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer),
-            json: (): Promise<unknown> => Promise.resolve(JSON.parse(raw.toString('utf8'))),
+            json: async (): Promise<unknown> => JSON.parse(raw.toString('utf8')),
             text: (): Promise<string> => Promise.resolve(raw.toString('utf8')),
           },
           headers: res.headers,

@@ -35,6 +35,7 @@ const WS_DEFAULT_MAX_PAYLOAD = 64 * 1024 * 1024;
 export interface WebSocketClientOptions {
 
   headers?: Record<string, string>;
+  heartbeatInterval?: number;
   maxPayload?: number;
   rejectUnauthorized?: boolean;
 }
@@ -59,8 +60,11 @@ export class WebSocketClient extends EventEmitter {
   private fragments: Buffer[];
   private fragmentOpcode: number;
   private fragmentSize: number;
+  private heartbeatInterval: number;
+  private heartbeatTimer: Nullable<NodeJS.Timeout>;
   private maxPayload: number;
   private request: Nullable<http.ClientRequest>;
+  private sawFrame: boolean;
   private socket: Nullable<net.Socket>;
 
   // Create a new WebSocket connection to a ws:// or wss:// URL and begin the opening handshake.
@@ -73,9 +77,12 @@ export class WebSocketClient extends EventEmitter {
     this.fragments = [];
     this.fragmentOpcode = 0;
     this.fragmentSize = 0;
+    this.heartbeatInterval = options.heartbeatInterval ?? 0;
+    this.heartbeatTimer = null;
     this.maxPayload = options.maxPayload ?? WS_DEFAULT_MAX_PAYLOAD;
     this.readyState = WebSocketClient.CONNECTING;
     this.request = null;
+    this.sawFrame = false;
     this.socket = null;
 
     this.connect(url, options);
@@ -151,10 +158,12 @@ export class WebSocketClient extends EventEmitter {
           this.closeTimer = null;
         }
 
+        this.stopHeartbeat();
         this.readyState = WebSocketClient.CLOSED;
         this.emit('close');
       });
 
+      this.startHeartbeat();
       this.emit('open');
 
       // Process any data that arrived alongside the handshake.
@@ -189,6 +198,47 @@ export class WebSocketClient extends EventEmitter {
     });
 
     req.end();
+  }
+
+  // Start the liveness heartbeat, when configured. Any complete inbound frame - a pong included - counts as proof of life. On each interval tick, a silent peer
+  // is declared dead and the connection torn down; otherwise we send a ping to prompt the peer into answering before the next tick. The successful handshake
+  // seeds the first interval as live, so the peer always sees at least one ping before we give up on it.
+  private startHeartbeat(): void {
+
+    if(this.heartbeatInterval <= 0) {
+
+      return;
+    }
+
+    this.sawFrame = true;
+
+    this.heartbeatTimer = setInterval(() => {
+
+      // The peer's gone quiet for a full interval, even after we've pinged it - the connection is dead. Destroying the socket emits our close event.
+      if(!this.sawFrame) {
+
+        this.stopHeartbeat();
+        this.socket?.destroy();
+
+        return;
+      }
+
+      this.sawFrame = false;
+      this.sendFrame(Opcode.PING, Buffer.alloc(0));
+    }, this.heartbeatInterval);
+
+    // The heartbeat must never hold the process open on its own.
+    this.heartbeatTimer.unref();
+  }
+
+  // Stop the liveness heartbeat.
+  private stopHeartbeat(): void {
+
+    if(this.heartbeatTimer) {
+
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
   }
 
   // Emit an error event, but only when someone is listening. EventEmitter throws on unhandled 'error' events, and a transport-level hiccup arriving after a
@@ -242,8 +292,11 @@ export class WebSocketClient extends EventEmitter {
       }
 
       // Enforce our payload size cap before we commit to buffering the frame. A frame this large is either a protocol violation or a hostile endpoint - either
-      // way, we're done. We account for any partially assembled fragmented message as well so fragmentation can't be used to sidestep the cap.
-      if((payloadLength > this.maxPayload) || ((this.fragmentSize + payloadLength) > this.maxPayload)) {
+      // way, we're done. For data frames, we account for any partially assembled fragmented message as well so fragmentation can't be used to sidestep the
+      // cap - control frames can arrive interleaved between fragments and don't contribute to the message being assembled, so they're checked on their own.
+      const isControlFrame = opcode >= 0x8;
+
+      if((payloadLength > this.maxPayload) || (!isControlFrame && ((this.fragmentSize + payloadLength) > this.maxPayload))) {
 
         this.emitError(new Error('WebSocket message exceeds the maximum allowed size of ' + this.maxPayload + ' bytes.'));
         this.terminate();
@@ -290,26 +343,49 @@ export class WebSocketClient extends EventEmitter {
   // Handle a single decoded WebSocket frame, reassembling fragmented messages as needed.
   private processFrame(opcode: number, payload: Buffer, isFinal: boolean): void {
 
+    // Any complete frame from the server - pongs included - proves the connection is alive for our heartbeat watchdog.
+    this.sawFrame = true;
+
     switch(opcode) {
 
       case Opcode.CONTINUATION:
+
+        // A continuation frame with no fragmented message in progress can't be interpreted - fail the connection per RFC 6455.
+        if(!this.fragmentOpcode) {
+
+          this.emitError(new Error('WebSocket protocol violation: continuation frame received with no message in progress.'));
+          this.terminate();
+
+          break;
+        }
 
         this.fragments.push(payload);
         this.fragmentSize += payload.length;
 
         if(isFinal) {
 
+          const messageOpcode = this.fragmentOpcode;
           const message = Buffer.concat(this.fragments);
 
           this.fragments = [];
+          this.fragmentOpcode = 0;
           this.fragmentSize = 0;
-          this.emitMessage(this.fragmentOpcode, message);
+          this.emitMessage(messageOpcode, message);
         }
 
         break;
 
       case Opcode.TEXT:
       case Opcode.BINARY:
+
+        // A new data frame while a fragmented message is still being assembled is a protocol violation. The new frame is self-contained and interpretable, so
+        // we drop the unfinished message rather than failing the connection - but the stale fragments must not leak into this or any later message.
+        if(this.fragmentOpcode) {
+
+          this.fragments = [];
+          this.fragmentOpcode = 0;
+          this.fragmentSize = 0;
+        }
 
         if(!isFinal) {
 
@@ -335,6 +411,10 @@ export class WebSocketClient extends EventEmitter {
         this.readyState = WebSocketClient.CLOSING;
         this.socket?.end();
 
+        // Our side of the TCP shutdown is underway, but a peer that never completes its side would leave us in CLOSING forever with a leaked socket - force
+        // the issue if the socket hasn't fully closed promptly. The client-initiated close path may have already armed this timer.
+        this.closeTimer ??= setTimeout(() => this.socket?.destroy(), 1000);
+
         break;
 
       case Opcode.PING:
@@ -345,7 +425,7 @@ export class WebSocketClient extends EventEmitter {
 
       default:
 
-        // Pong frames and unknown opcodes need no action.
+        // Pong frames and unknown opcodes need no action beyond the liveness accounting above.
         break;
     }
   }
@@ -432,6 +512,7 @@ export class WebSocketClient extends EventEmitter {
 
     closePayload.writeUInt16BE(1000, 0);
 
+    this.stopHeartbeat();
     this.sendFrame(Opcode.CLOSE, closePayload);
     this.readyState = WebSocketClient.CLOSING;
 
@@ -444,6 +525,7 @@ export class WebSocketClient extends EventEmitter {
 
     const wasConnecting = this.readyState === WebSocketClient.CONNECTING;
 
+    this.stopHeartbeat();
     this.readyState = WebSocketClient.CLOSED;
     this.request?.destroy();
     this.socket?.destroy();

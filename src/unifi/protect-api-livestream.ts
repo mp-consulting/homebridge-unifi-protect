@@ -106,8 +106,8 @@ export interface LivestreamOptions {
  *
  * Those are the basics that gets us up and running.
  *
- * @event close       - Emitted when the livestream WebSocket connection has been closed. This event fires after cleanup is complete and the connection is
- *                      fully terminated.
+ * @event close       - Emitted exactly once when an active livestream session terminates for any reason - a server-side close, a socket error, a protocol
+ *                      desync, or an explicit stop. This event fires after cleanup is complete and the connection is fully terminated.
  * @event codec       - Emitted when codec information is received from the controller. The codec string is passed as an argument in the format
  *                      "codec,container" (e.g., "hev1.1.6.L150,mp4a.40.2"). Only emitted when not using stream mode.
  * @event initsegment - Emitted when an fMP4 initialization segment (FTYP and MOOV boxes) is received. The complete initialization segment Buffer is passed as
@@ -208,15 +208,27 @@ export class ProtectLivestream extends EventEmitter {
 
   /**
    * Stop an fMP4 livestream session from the Protect controller.
+   *
+   * @remarks Stopping an active session emits the `close` event once cleanup is complete. Calling stop on an already-stopped session is a no-op.
    */
   public stop(): void {
+
+    this.teardown();
+  }
+
+  // Single teardown path for a livestream session. The close event must fire exactly once for any termination of an active session - a server-initiated close,
+  // a socket error, a protocol desync, or an explicit stop - so consumers and watchdogs can recover deterministically. Nulling the websocket reference before
+  // emitting acts as our latch: reentry (and teardown of an already-stopped session) finds no websocket and emits nothing.
+  private teardown(): void {
+
+    const hadSession = !!this.ws;
 
     // Abort the session signal. This rejects any pending getInitSegment() promise.
     this.sessionAbort?.abort();
     this.sessionAbort = null;
 
-    // Remove all our WebSocket event listeners before closing the connection so a manual stop doesn't retrigger the close handler, mirroring the automatic
-    // signal-based listener removal in the original implementation.
+    // Remove all our WebSocket event listeners before closing the connection so the websocket's own close event can't reenter teardown once we've begun it, and
+    // so post-teardown traffic can't surface as events.
     this.ws?.removeAllListeners();
 
     // Close the websocket.
@@ -238,6 +250,12 @@ export class ProtectLivestream extends EventEmitter {
 
     // Flag that we are no longer running.
     this.ws = null;
+
+    // Inform consumers that the session has terminated, after cleanup is complete, per our documented contract.
+    if(hadSession) {
+
+      this.emit('close');
+    }
   }
 
   /**
@@ -302,7 +320,8 @@ export class ProtectLivestream extends EventEmitter {
 
     try {
 
-      // Open the livestream WebSocket. We explicitly allow self-signed TLS certificates since Protect controllers ship with them by default.
+      // Open the livestream WebSocket. Certificate validation follows the API's verifyTls setting, which defaults to off since Protect controllers ship with
+      // self-signed certificates.
       this.ws = new WebSocketClient(wsUrl, { rejectUnauthorized: this.api.verifyTls });
 
       // The user's requested that we use a stream interface instead of an event interface to push complete fMP4 segments.
@@ -351,18 +370,14 @@ export class ProtectLivestream extends EventEmitter {
           logError(util.inspect(error, { colors: true, depth: null, sorted: true }));
         }
 
-        this.stop();
+        this.teardown();
       });
 
-      ws.once('close', () => {
-
-        this.stop();
-        this.emit('close');
-      });
+      ws.once('close', () => this.teardown());
     } catch(error) {
 
       logError('error while connecting to the livestream websocket API: %s', error);
-      this.stop();
+      this.teardown();
 
       return false;
     }
@@ -440,12 +455,14 @@ export class ProtectLivestream extends EventEmitter {
         // Read the one-byte packet header.
         const header = packet.readUInt8(offset);
 
-        // Validate our header before we do anything else.
+        // Validate our header before we do anything else. An unrecognized header means we've lost framing sync with the stream and everything that follows is
+        // unparseable, so the connection must be torn down for consumers to recover deterministically.
         if(!VALID_LIVE_FRAMES.has(header)) {
 
           this.log.error('Invalid header found while decoding the livestream: %s', header);
+          this.teardown();
 
-          break;
+          return;
         }
 
         // Protect encodes the length of the entire fMP4 segment in the three bytes following the header byte, as a big-endian 24-bit unsigned integer.

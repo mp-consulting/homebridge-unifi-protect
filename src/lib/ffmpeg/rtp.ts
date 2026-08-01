@@ -91,11 +91,12 @@ export class RtpDemuxer extends EventEmitter {
     this.inputPort = inputPort;
     this.socket = createSocket(ipFamily === 'ipv6' ? 'udp6' : 'udp4');
 
-    // Catch errors when they happen on our demuxer.
+    // Catch errors when they happen on our demuxer. We close through close() so the heartbeat timer and running state are torn down with the socket - a
+    // heartbeat firing against a closed socket would throw inside the timer callback.
     this.socket.on('error', (error) => {
 
       this.log?.error('RtpDemuxer Error: %s', error);
-      this.socket.close();
+      this.close();
     });
 
     // Split the message into RTP and RTCP packets.
@@ -144,14 +145,22 @@ export class RtpDemuxer extends EventEmitter {
     // the margin for error to ensure the process continues to run.
     this.heartbeatTimer = setTimeout(() => {
 
-      if(!this.heartbeatMsg) {
+      if(!this._isRunning || !this.heartbeatMsg) {
 
         return;
       }
 
       this.log?.debug('Sending ffmpeg a heartbeat.');
 
-      this.socket.send(this.heartbeatMsg, port);
+      // Sending on a closed socket throws synchronously, and an uncaught exception inside a timer callback would take down the process.
+      try {
+
+        this.socket.send(this.heartbeatMsg, port);
+      } catch(error) {
+
+        return;
+      }
+
       this.heartbeat(port);
     }, TWOWAY_HEARTBEAT_INTERVAL * 1000);
   }
@@ -167,11 +176,29 @@ export class RtpDemuxer extends EventEmitter {
    */
   public close(): void {
 
+    // Closing must be idempotent - a socket error can trigger a close ahead of session teardown, and a second socket.close() would throw and abort the
+    // caller's cleanup.
+    if(!this._isRunning) {
+
+      return;
+    }
+
     this.log?.debug('Closing the RtpDemuxer instance on port %s.', this.inputPort);
 
+    // Tear down the heartbeat state before the socket so a pending timer can't fire against a closed socket.
     clearTimeout(this.heartbeatTimer);
-    this.socket.close();
+    this.heartbeatTimer = undefined;
+    this.heartbeatMsg = undefined;
     this._isRunning = false;
+
+    try {
+
+      this.socket.close();
+    } catch(error) {
+
+      // The socket is already closed - nothing to do.
+    }
+
     this.emit('rtp');
   }
 

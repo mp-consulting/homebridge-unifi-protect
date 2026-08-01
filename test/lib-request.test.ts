@@ -149,18 +149,25 @@ describe('request', () => {
 
     await new Promise<void>(resolve => tlsServer.listen(0, resolve));
 
-    const tlsUrl = 'https://localhost:' + (tlsServer.address() as AddressInfo).port + '/';
+    try {
 
-    // With validation enabled (the default), the self-signed certificate must be rejected.
-    await expect(request(tlsUrl, { agent: new https.Agent({ rejectUnauthorized: true }) })).rejects.toMatchObject({ code: 'DEPTH_ZERO_SELF_SIGNED_CERT' });
+      const tlsUrl = 'https://localhost:' + (tlsServer.address() as AddressInfo).port + '/';
 
-    // With validation disabled - what verifyTls: false configures - the request must succeed.
-    const response = await request(tlsUrl, { agent: new https.Agent({ rejectUnauthorized: false }) });
+      // With validation enabled (the default), the self-signed certificate must be rejected.
+      await expect(request(tlsUrl, { agent: new https.Agent({ rejectUnauthorized: true }) })).rejects.toMatchObject({ code: 'DEPTH_ZERO_SELF_SIGNED_CERT' });
 
-    expect(response.statusCode).toBe(200);
-    expect(await response.body.text()).toBe('secure');
+      // Validation is also the default when no agent is supplied at all.
+      await expect(request(tlsUrl)).rejects.toMatchObject({ code: 'DEPTH_ZERO_SELF_SIGNED_CERT' });
 
-    tlsServer.close();
+      // With validation disabled - what verifyTls: false configures - the request must succeed.
+      const response = await request(tlsUrl, { agent: new https.Agent({ rejectUnauthorized: false }) });
+
+      expect(response.statusCode).toBe(200);
+      expect(await response.body.text()).toBe('secure');
+    } finally {
+
+      tlsServer.close();
+    }
   });
 
   it('rejects on connection errors to unreachable hosts', async () => {
@@ -174,6 +181,7 @@ describe('request', () => {
 
     await new Promise<void>(resolve => probe.close(() => resolve()));
 
-    await expect(request('http://localhost:' + deadPort + '/')).rejects.toMatchObject({ code: 'ECONNREFUSED' });
+    // The just-freed port could in principle be rebound before we connect, so assert on a network-level failure rather than the exact refusal code.
+    await expect(request('http://localhost:' + deadPort + '/')).rejects.toMatchObject({ code: expect.any(String) });
   });
 });

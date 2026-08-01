@@ -216,6 +216,13 @@ export class FfmpegProcess extends EventEmitter {
       return;
     }
 
+    // A kill timer armed for a previous process must not outlive it and strike the replacement we're about to spawn.
+    if(this.ffmpegTimeout) {
+
+      clearTimeout(this.ffmpegTimeout);
+      this.ffmpegTimeout = undefined;
+    }
+
     // Execute the command line based on what we've prepared.
     this.process = spawn(this.options.codecSupport.ffmpegExec, this.commandLineArgs);
 
@@ -229,8 +236,11 @@ export class FfmpegProcess extends EventEmitter {
     let dataListener: (data: Buffer) => void;
     let errorListener: (error: Error) => void;
 
+    // Capture the child we're configuring. On a reused instance, a late-exiting old process must never mutate state belonging to a newly started one.
+    const childProcess = this.process;
+
     // Handle errors emitted during process creation, such as an invalid command line.
-    this.process?.once('error', (error: NodeJS.ErrnoException) => {
+    childProcess?.once('error', (error: NodeJS.ErrnoException) => {
 
       let message = error.message;
 
@@ -249,7 +259,7 @@ export class FfmpegProcess extends EventEmitter {
     });
 
     // Handle errors on stdin.
-    this.process?.stdin.on('error', errorListener = (error: Error): void => {
+    childProcess?.stdin.on('error', errorListener = (error: Error): void => {
 
       if(!error.message.includes('EPIPE')) {
 
@@ -258,7 +268,7 @@ export class FfmpegProcess extends EventEmitter {
     });
 
     // Handle logging output that gets sent to stderr.
-    this.process?.stderr.on('data', dataListener = (data: Buffer): void => {
+    childProcess?.stderr.on('data', dataListener = (data: Buffer): void => {
 
       // Inform us when we start receiving data back from FFmpeg. We do this here because it's the only truly reliable place we can check on FFmpeg. stdin and
       // stdout may not be used at all, depending on the way FFmpeg is called, but stderr will always be there.
@@ -306,7 +316,17 @@ export class FfmpegProcess extends EventEmitter {
     });
 
     // Handle our process termination.
-    this.process?.once('exit', (exitCode, signal) => {
+    childProcess?.once('exit', (exitCode, signal) => {
+
+      // Always detach the listeners we attached to this specific child.
+      childProcess.stdin.off('error', errorListener);
+      childProcess.stderr.off('data', dataListener);
+
+      // If we've been restarted while the old process was still winding down, this exit belongs to a superseded process - it must not touch shared state.
+      if(this.process !== childProcess) {
+
+        return;
+      }
 
       // Clear out our canary.
       if(this.ffmpegTimeout) {
@@ -324,7 +344,7 @@ export class FfmpegProcess extends EventEmitter {
       if(this.ffmpegTimeout && (exitCode === 0)) {
 
         this.log.debug(logPrefix + '(Normal).');
-      } else if(((exitCode === null) || (exitCode === 255)) && this.process?.killed) {
+      } else if(((exitCode === null) || (exitCode === 255)) && childProcess.killed) {
 
         // FFmpeg has ended. Let's figure out if it's because we killed it or whether it died of natural causes.
         this.log.debug(logPrefix + (signal === 'SIGKILL' ? '(Killed).' : '(Expected).'));
@@ -351,14 +371,18 @@ export class FfmpegProcess extends EventEmitter {
       }
 
       // Cleanup after ourselves. We intentionally preserve _stderrLog so callers can inspect it for post-mortem diagnostics after the process exits.
-      this.process?.stdin.off('error', errorListener);
-      this.process?.stderr.off('data', dataListener);
       this.process = null;
     });
   }
 
   // Stop the FFmpeg process and complete any cleanup activities.
   protected stopProcess(): void {
+
+    // If the process has already exited, there's nothing to kill - arming the kill timer here would leave an uncleared five-second timeout behind.
+    if(!this.process) {
+
+      return;
+    }
 
     // Check to make sure we aren't using stdin for data before telling FFmpeg we're done.
     if(!this.commandLineArgs.includes('pipe:0')) {

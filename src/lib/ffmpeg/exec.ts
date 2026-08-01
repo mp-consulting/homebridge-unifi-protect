@@ -149,6 +149,13 @@ export class FfmpegExec extends FfmpegProcess {
         this.stop();
       });
 
+      // A failed spawn (e.g. ENOENT or EACCES) emits an error event without ever emitting exit, so we must settle here as well or the promise never resolves.
+      // Resolving a promise is idempotent, so we can't double-settle if exit follows.
+      this.process.once('error', () => {
+
+        resolve(null);
+      });
+
       // Return when process is done.
       this.process.once('exit', (exitCode) => {
 

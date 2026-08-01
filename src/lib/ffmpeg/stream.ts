@@ -30,7 +30,7 @@ import { FFMPEG_INPUT_TIMEOUT } from './settings.js';
 import type { FfmpegOptions } from './options.js';
 import { FfmpegProcess } from './process.js';
 import type { Nullable } from '../util.js';
-import { createSocket } from 'node:dgram';
+import { type Socket, createSocket } from 'node:dgram';
 
 /**
  * Extension of the Homebridge CameraStreamingDelegate with additional streaming controls and error handling hooks.
@@ -96,6 +96,11 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
   private sessionId: string;
 
   /**
+   * The UDP socket used to monitor stream health. Must be closed on every teardown path to avoid leaking a bound socket per streaming session.
+   */
+  private socket?: Socket;
+
+  /**
    * The timeout reference used to monitor UDP stream health.
    */
   private streamTimeout?: NodeJS.Timeout;
@@ -157,6 +162,9 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
       this.delegate.controller.forceStopStreamingSession(this.sessionId);
       this.delegate.stopStream?.(this.sessionId);
     });
+
+    // The stream-health socket and its timeout must not outlive the FFmpeg process - a timeout firing after teardown would act on a dead session.
+    this.process?.once('exit', () => this.closeSocket());
   }
 
   /**
@@ -174,6 +182,9 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
 
     const isIPv6 = portInfo.addressVersion === 'ipv6';
     const socket = createSocket(isIPv6 ? 'udp6' : 'udp4');
+
+    // Retain the socket so every teardown path can close it - otherwise we leak one bound socket per streaming session.
+    this.socket = socket;
 
     // Cleanup after ourselves when the socket closes.
     socket.once('close', () => {
@@ -215,6 +226,40 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
 
     // Bind to the port we're opening.
     socket.bind(portInfo.port, isIPv6 ? '::1' : '127.0.0.1');
+  }
+
+  /**
+   * Closes the stream-health socket and clears any pending health timeout. Safe to call from multiple teardown paths - closing is idempotent.
+   */
+  private closeSocket(): void {
+
+    if(this.streamTimeout) {
+
+      clearTimeout(this.streamTimeout);
+      this.streamTimeout = undefined;
+    }
+
+    // Closing an already-closed socket throws, and teardown can arrive from multiple paths (stop, process exit), so we tolerate it here.
+    try {
+
+      this.socket?.close();
+    } catch(error) {
+
+      // The socket is already closed - nothing to do.
+    }
+
+    this.socket = undefined;
+  }
+
+  /**
+   * Stops the FFmpeg process and releases the stream-health socket so we don't leak a bound socket per streaming session.
+   */
+  protected stopProcess(): void {
+
+    this.closeSocket();
+
+    // Call our parent to finish the teardown.
+    super.stopProcess();
   }
 
   /**
