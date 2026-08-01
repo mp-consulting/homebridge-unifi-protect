@@ -2,15 +2,20 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.2.0] - 2026-08-01
 
 ### Added
 
-- **`verifyTls` controller option**: Per-controller opt-in TLS certificate validation — covering the API connection, the realtime events WebSocket, and the livestream WebSocket — for setups where the Protect controller uses a certificate signed by a trusted certificate authority. Defaults to `false` (unchanged behavior), since UniFi controllers ship with self-signed certificates.
+- **`verifyTls` controller option**: Per-controller opt-in TLS certificate validation — covering the API connection, the realtime events WebSocket, the livestream WebSocket, and two-way audio talkback — for setups where the Protect controller uses a certificate signed by a trusted certificate authority. Defaults to `false` (unchanged behavior), since UniFi controllers ship with self-signed certificates. The option is exposed in both the custom UI's controller form and the schema-driven settings form, and the custom UI's connection validation honors it as well.
+- **Realtime events watchdog**: The events WebSocket now sends protocol-level heartbeats and detects a connection that died without a clean shutdown (controller power-cycle, network partition), reconnecting within seconds instead of silently never delivering motion, doorbell, and sensor events again until Homebridge restarts.
 
 ### Fixed
 
-- **WebSocket shutdown races**: A transport error arriving after a consumer detached its listeners (e.g. a peer reset during the close handshake right after stopping a livestream) could raise an unhandled `error` event and crash the process; error events are now emitted only when listened for. Closing a WebSocket while its opening handshake was still in flight previously leaked the connection if the handshake later completed; the in-flight upgrade is now aborted and the connection discarded.
+- **HKSV startup crash**: A livestream WebSocket failure during HomeKit Secure Video startup (e.g. a controller mid-reboot) could surface as an unhandled promise rejection and take down the whole Homebridge process; the initialization-segment wait now degrades gracefully at every call site.
+- **WebSocket shutdown races**: A transport error arriving after a consumer detached its listeners (e.g. a peer reset during the close handshake right after stopping a livestream) could raise an unhandled `error` event and crash the process; error events are now emitted only when listened for. Closing a WebSocket while its opening handshake was still in flight previously leaked the connection if the handshake later completed; the in-flight upgrade is now aborted and the connection discarded. A delayed close from a superseded events socket could also orphan its replacement and double-deliver every subsequent event; close handling is now identity-guarded.
+- **MQTT reliability**: The MQTT client wrote SUBSCRIBE/PUBLISH packets ahead of CONNECT when brokers were configured, violating the MQTT specification and causing compliant brokers to drop the first connection attempt at every launch; application packets are now queued until the broker acknowledges the connection. The client also gains a connection handshake timeout, bounds-checked packet decoding (a malformed broker packet could previously crash the process), and a cap on broker-declared packet sizes.
+- **FFmpeg process lifecycle**: Each HomeKit streaming session leaked a bound UDP socket used for stream-health monitoring; sockets and their timers are now released on teardown. A stale two-way-audio heartbeat timer firing after a socket error could crash the process; RTP demuxer teardown is now idempotent. A failed FFmpeg spawn (binary removed, file-descriptor exhaustion) left snapshot requests hanging forever; process launch failures now settle immediately. Reused livestream processes now reset their fMP4 initialization-segment state on restart, preventing corrupted HKSV recordings in RTSP mode.
+- **API client resilience**: Snapshots now re-authenticate after a session expires instead of failing for up to two minutes; non-idempotent POST requests are no longer transparently retried; livestream connections now emit `close` exactly once on any termination — including error paths — and a desynced livestream parser tears the connection down for a clean restart instead of spinning on garbage.
 
 ### Changed
 
