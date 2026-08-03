@@ -56,6 +56,11 @@ Everything not listed here is a faithful port. The deviations, all behavior-neut
   `no-useless-assignment`; both are definitely assigned before every read).
 - `record.ts`: `translateAudioSampleRate[...samplerate as AudioRecordingSamplerate]` — this hap-nodejs version types `samplerate` as possibly an array; the cast
   preserves upstream's exact runtime indexing.
+- **Added** (not in upstream): `FfmpegExec.exec()` accepts an optional `timeout` that terminates the process and resolves `null` when it overruns. Upstream's
+  signature is `exec(stdinData?)` and has no bound at all, which leaves an FFmpeg process running indefinitely whenever a caller abandons the promise — the
+  snapshot pipeline does exactly that, since HomeKit gives it a hard five-second budget and `runWithTimeout` deliberately does not cancel its subject.
+- `process.ts`: `stopProcess()` clears any pending `ffmpegTimeout` before arming a new one. Upstream overwrites the handle, stranding the earlier timer when
+  the process is stopped twice before it exits — reachable now that a timed-out `exec()` stops the process and the subsequent exit stops it again.
 - Comments rewrapped to ≤160 columns throughout (repo lint counts comments).
 
 ### `src/lib/` shared files (from homebridge-plugin-utils 1.35.0 / @homebridge/plugin-ui-utils 2.2.3)

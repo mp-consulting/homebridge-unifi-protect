@@ -136,6 +136,57 @@ describe('FfmpegExec', () => {
     expect(result?.exitCode).toBe(0);
     expect(result?.stdout.toString()).toBe('ffmpeg output');
   });
+
+  it('kills the process and resolves null when the timeout expires', async () => {
+
+    vi.useFakeTimers();
+
+    try {
+
+      const exec = new FfmpegExec(createOptions(), [ '-i', 'rtsp://127.0.0.1/stalled', 'pipe:1' ], false);
+
+      // A stalled input never emits exit, so only the timeout can settle this.
+      const resultPromise = exec.exec(undefined, 1000);
+      const child = lastChild();
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(child.killed).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(resultPromise).resolves.toBeNull();
+      expect(child.killed).toBe(true);
+    } finally {
+
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not kill the process when it exits within the timeout', async () => {
+
+    vi.useFakeTimers();
+
+    try {
+
+      const exec = new FfmpegExec(createOptions(), [ '-version' ], false);
+      const resultPromise = exec.exec(undefined, 1000);
+      const child = lastChild();
+
+      child.stdout.emit('data', Buffer.from('snapshot'));
+      child.emit('exit', 0, null);
+
+      const result = await resultPromise;
+
+      expect(result?.exitCode).toBe(0);
+      expect(result?.stdout.toString()).toBe('snapshot');
+
+      // Advancing past the timeout must not resurrect the timer and kill an already-exited process.
+      await vi.advanceTimersByTimeAsync(2000);
+    } finally {
+
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('FfmpegLivestreamProcess box parsing', () => {
