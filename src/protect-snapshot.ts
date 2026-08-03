@@ -6,7 +6,7 @@
 import type { API, HAP, SnapshotRequest } from 'homebridge';
 import { FfmpegExec, type HomebridgePluginLogging, type Nullable, request, runWithTimeout } from './lib/index.js';
 import https from 'node:https';
-import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE, PROTECT_SNAPSHOT_TIMEOUT } from './settings.js';
+import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE, PROTECT_SNAPSHOT_FALLBACK_RESERVE, PROTECT_SNAPSHOT_TIMEOUT } from './settings.js';
 import type { ProtectCamera } from './devices/index.js';
 import type { ProtectNvr } from './protect-nvr.js';
 import type { ProtectPlatform } from './protect-platform.js';
@@ -19,6 +19,7 @@ export class ProtectSnapshot {
   private readonly hap: HAP;
   public readonly log: HomebridgePluginLogging;
   private readonly nvr: ProtectNvr;
+  private readonly pendingSnapshots: Map<string, Promise<Nullable<Buffer>>>;
   public readonly platform: ProtectPlatform;
   public readonly protectCamera: ProtectCamera;
 
@@ -29,6 +30,7 @@ export class ProtectSnapshot {
     this.hap = protectCamera.api.hap;
     this.log = protectCamera.log;
     this.nvr = protectCamera.nvr;
+    this.pendingSnapshots = new Map();
     this.protectCamera = protectCamera;
     this.platform = protectCamera.platform;
     this._cachedSnapshot = null;
@@ -45,6 +47,23 @@ export class ProtectSnapshot {
 
     // See if we have an image cached that we can use, if needed.
     const cachedSnapshot = this.cachedSnapshot;
+
+    // The deadline for this request. Each snapshot source we try is bounded against it so that a slow source can't consume the entire budget and leave us
+    // with nothing to show for it.
+    const deadline = Date.now() + PROTECT_SNAPSHOT_TIMEOUT;
+
+    // HomeKit will happily ask for the same image several times over - opening the Home app requests a snapshot for every camera tile, and a doorbell ring
+    // adds more on top of that. Coalescing identical in-flight requests means we spawn one FFmpeg instance instead of several that compete with each other
+    // for the same RTSP stream and CPU. We key on the requested dimensions so that callers always get an image scaled the way they asked for it.
+    const requestKey = request ? (request.width.toString() + 'x' + request.height.toString()) : 'default';
+    const pending = this.pendingSnapshots.get(requestKey);
+
+    if(pending) {
+
+      const shared = await runWithTimeout(pending, PROTECT_SNAPSHOT_TIMEOUT);
+
+      return shared ?? this.snapshotFallback(cachedSnapshot);
+    }
 
     // We request the snapshot to prioritize performance and quality of the image. The reason for this is that the Protect API constrains the quality level
     // of snapshot images and doesn't always produce them reliably. Fortunately, we have a few options. We retrieve snapshots by trying to use the following
@@ -66,22 +85,23 @@ export class ProtectSnapshot {
 
       if(!snapAttempt) {
 
-        snapAttempt = await this.snapFromTimeshift(request);
+        // The timeshift buffer still has both the RTSP stream and the controller API queued up behind it.
+        snapAttempt = await this.snapFromTimeshift(this.sourceBudget(deadline, true), request);
       }
 
-      // No snapshot yet, let's try again.
+      // No snapshot yet, let's try again. Each source is bounded to the time we have left, holding back a reserve for whatever follows it so that a slow
+      // source can't consume the whole budget and leave its fallback with nothing.
       if(!snapAttempt) {
 
         // We treat package cameras uniquely.
         if('packageCamera' in this.protectCamera.accessory.context) {
 
-          snapAttempt = (await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp,
-            { height: request?.height, usePackageCamera: true, width: request?.width })) ??
-            (await this.snapFromRtsp(request));
+          snapAttempt = (await this.snapFromApi(this.sourceBudget(deadline, true), true, request)) ??
+            (await this.snapFromRtsp(this.sourceBudget(deadline, false), request));
         } else {
 
-          snapAttempt = (await this.snapFromRtsp(request)) ?? (await this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp,
-            { height: request?.height, width: request?.width }));
+          snapAttempt = (await this.snapFromRtsp(this.sourceBudget(deadline, true), request)) ??
+            (await this.snapFromApi(this.sourceBudget(deadline, false), false, request));
         }
       }
 
@@ -93,7 +113,15 @@ export class ProtectSnapshot {
       // Crop the snapshot, if we're configured to do so.
       if(this.protectCamera.hints.crop) {
 
-        snapAttempt = await this.cropSnapshot(snapAttempt) ?? snapAttempt;
+        const cropped = await this.cropSnapshot(snapAttempt, this.sourceBudget(deadline, false));
+
+        // Cropping is often used to keep something out of frame deliberately, so falling back to the full image isn't something to do quietly.
+        if(!cropped) {
+
+          this.log.warn('Unable to crop this snapshot: returning the uncropped image instead.');
+        }
+
+        snapAttempt = cropped ?? snapAttempt;
       }
 
       // Cache the image before returning it.
@@ -102,26 +130,42 @@ export class ProtectSnapshot {
       return snapAttempt;
     })();
 
-    // Get a snapshot, but ensure we constrain it so we can return in a responsive manner.
-    const snapshot = await runWithTimeout(snapshotPromise, PROTECT_SNAPSHOT_TIMEOUT);
+    // Publish this attempt so that concurrent requests for the same dimensions can ride along with it rather than starting their own.
+    this.pendingSnapshots.set(requestKey, snapshotPromise);
+
+    // Get a snapshot, but ensure we constrain it so we can return in a responsive manner. We clear our in-flight entry when the underlying work actually
+    // finishes rather than when we time out, so a request that overruns its budget doesn't get duplicated by the next caller.
+    const snapshot = await runWithTimeout(snapshotPromise.finally(() => {
+
+      if(this.pendingSnapshots.get(requestKey) === snapshotPromise) {
+
+        this.pendingSnapshots.delete(requestKey);
+      }
+    }), PROTECT_SNAPSHOT_TIMEOUT);
 
     // Occasional snapshot failures will happen. The controller isn't always able to generate them if one is already inflight or if it's too soon after the
     // last one.
     if(!snapshot) {
 
-      if(cachedSnapshot) {
-
-        this.log.warn('Unable to retrieve a snapshot: using the most recent cached snapshot instead.');
-
-        return cachedSnapshot;
-      }
-
-      this.log.error('Unable to retrieve a snapshot.');
-
-      return null;
+      return this.snapshotFallback(cachedSnapshot);
     }
 
-    return this._cachedSnapshot?.image ?? null;
+    return snapshot;
+  }
+
+  // Fall back to the most recent cached image when we can't produce a fresh snapshot.
+  private snapshotFallback(cachedSnapshot: Nullable<Buffer>): Nullable<Buffer> {
+
+    if(cachedSnapshot) {
+
+      this.log.warn('Unable to retrieve a snapshot: using the most recent cached snapshot instead.');
+
+      return cachedSnapshot;
+    }
+
+    this.log.error('Unable to retrieve a snapshot.');
+
+    return null;
   }
 
   // Snapshots fetched directly from a user-provided URL on the camera, bypassing the Protect controller. Used for ONVIF and other third-party
@@ -165,8 +209,27 @@ export class ProtectSnapshot {
     }
   }
 
+  // How long a snapshot source may run, given our overall deadline. When something is still queued up behind it we hold back a reserve so that source gets
+  // a turn rather than being starved by whatever ran ahead of it. A non-positive result means there's no time left to try this source at all.
+  private sourceBudget(deadline: number, hasFallback: boolean): number {
+
+    return deadline - Date.now() - (hasFallback ? PROTECT_SNAPSHOT_FALLBACK_RESERVE : 0);
+  }
+
+  // Snapshots generated on demand by the Protect controller. Lower quality than the FFmpeg-based sources, but far quicker, which makes it our fallback.
+  private async snapFromApi(budget: number, usePackageCamera: boolean, request?: SnapshotRequest): Promise<Nullable<Buffer>> {
+
+    // Out of time - calling the controller now would only guarantee an abort and an error in the log.
+    if(budget <= 0) {
+
+      return null;
+    }
+
+    return this.nvr.ufpApi.getSnapshot(this.protectCamera.ufp, { height: request?.height, timeout: budget, usePackageCamera, width: request?.width });
+  }
+
   // Snapshots using the timeshift buffer as the source.
-  private async snapFromTimeshift(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
+  private async snapFromTimeshift(budget: number, request?: SnapshotRequest): Promise<Nullable<Buffer>> {
 
     // If we aren't generating high resolution snapshots, we're done.
     if(!this.protectCamera.stream || !this.protectCamera.hints.highResSnapshots) {
@@ -195,11 +258,11 @@ export class ProtectSnapshot {
       '-i', 'pipe:0',
     ];
 
-    return this.snapFromFfmpeg(ffmpegOptions, request, buffer);
+    return this.snapFromFfmpeg(ffmpegOptions, budget, request, buffer);
   }
 
   // Snapshots using the Protect RTSP endpoints as the source.
-  private async snapFromRtsp(request?: SnapshotRequest): Promise<Nullable<Buffer>> {
+  private async snapFromRtsp(budget: number, request?: SnapshotRequest): Promise<Nullable<Buffer>> {
 
     // If we aren't generating high resolution snapshots, we're done.
     if(!this.protectCamera.stream || !this.protectCamera.hints.highResSnapshots) {
@@ -231,13 +294,14 @@ export class ProtectSnapshot {
       '-i', rtspEntry.url,
     ];
 
-    return this.snapFromFfmpeg(ffmpegOptions, request);
+    return this.snapFromFfmpeg(ffmpegOptions, budget, request);
   }
 
   // Generate a snapshot using FFmpeg.
-  private async snapFromFfmpeg(ffmpegInputOptions: string[], request?: SnapshotRequest, buffer?: Buffer): Promise<Nullable<Buffer>> {
+  private async snapFromFfmpeg(ffmpegInputOptions: string[], budget: number, request?: SnapshotRequest, buffer?: Buffer): Promise<Nullable<Buffer>> {
 
-    if(!this.protectCamera.stream) {
+    // If there's no time left in our budget, don't start something we can't finish - our fallback is a better use of what remains.
+    if(!this.protectCamera.stream || (budget <= 0)) {
 
       return null;
     }
@@ -304,8 +368,9 @@ export class ProtectSnapshot {
     // Instantiate FFmpeg.
     const ffmpeg = new FfmpegExec(this.protectCamera.stream.ffmpegOptions, commandLineOptions, false);
 
-    // Retrieve the snapshot.
-    const ffmpegResult = await ffmpeg.exec(buffer);
+    // Retrieve the snapshot, bounded by whatever's left of our budget. FFmpeg gets killed if it overruns, which keeps a stalled RTSP session from lingering
+    // long after we've given up on it and starving subsequent snapshot attempts of CPU.
+    const ffmpegResult = await ffmpeg.exec(buffer, budget);
 
     // We're done. If we produced an empty image, we couldn't utilize the output.
     if(ffmpegResult?.exitCode === 0) {
@@ -317,9 +382,10 @@ export class ProtectSnapshot {
   }
 
   // Image snapshot crop handler.
-  private async cropSnapshot(snapshot: Buffer): Promise<Nullable<Buffer>> {
+  private async cropSnapshot(snapshot: Buffer, budget: number): Promise<Nullable<Buffer>> {
 
-    if(!this.protectCamera.stream) {
+    // Cropping is the last thing we do, so it gets whatever's left of the budget - there's nothing behind it to reserve time for.
+    if(!this.protectCamera.stream || (budget <= 0)) {
 
       return null;
     }
@@ -349,18 +415,10 @@ export class ProtectSnapshot {
     ]);
 
     // Retrieve the snapshot.
-    const ffmpegResult = await ffmpeg.exec(snapshot);
+    const ffmpegResult = await ffmpeg.exec(snapshot, budget);
 
-    // Crop succeeded, we're done.
-    if(ffmpegResult?.exitCode === 0) {
-
-      return ffmpegResult.stdout;
-    }
-
-    // Something went wrong.
-    this.log.error('Unable to crop snapshot.');
-
-    return null;
+    // Crop succeeded, we're done. Our caller reports the failure case, since it's the one that decides what to do about it.
+    return (ffmpegResult?.exitCode === 0) ? ffmpegResult.stdout : null;
   }
 
   // Retrieve a cached snapshot, if available.

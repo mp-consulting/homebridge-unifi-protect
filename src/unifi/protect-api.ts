@@ -667,11 +667,15 @@ export class ProtectApi extends EventEmitter {
    * | `width` | `number` | Requested image width in pixels | Camera default |
    * | `height` | `number` | Requested image height in pixels | Camera default |
    * | `usePackageCamera` | `boolean` | Use package camera if available | `false` |
+   * | `timeout` | `number` | Milliseconds to wait for the controller before giving up | `3500` |
+   *
+   * `timeout` matters when the caller is itself working against a deadline - HomeKit snapshot requests, for instance, must return within five seconds
+   * regardless of how long the controller takes. Without it, the default response timeout can outlast the caller's own budget.
    *
    * @category API Access
    */
   public async getSnapshot(device: ProtectCameraConfig,
-    options: Partial<{ width: number, height: number, usePackageCamera: boolean }> = {}): Promise<Nullable<Buffer>> {
+    options: Partial<{ width: number, height: number, timeout: number, usePackageCamera: boolean }> = {}): Promise<Nullable<Buffer>> {
 
     // Log us in if needed.
     if(!(await this.loginController())) {
@@ -699,9 +703,9 @@ export class ProtectApi extends EventEmitter {
       params.append('w', options.width.toString());
     }
 
-    // Request the image from the controller.
+    // Request the image from the controller, honoring the caller's timeout if they gave us one.
     const response = await this.retrieve(this.getApiEndpoint(device.modelKey) + '/' + device.id + '/' + (options.usePackageCamera ? 'package-' : '') +
-      'snapshot?' + params.toString(), { method: 'GET' });
+      'snapshot?' + params.toString(), { method: 'GET' }, (options.timeout === undefined) ? {} : { timeout: options.timeout });
 
     if(!response || !this.responseOk(response.statusCode)) {
 

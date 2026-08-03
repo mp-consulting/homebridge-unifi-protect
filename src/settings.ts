@@ -104,6 +104,12 @@ export const PROTECT_SNAPSHOT_CACHE_MAXAGE = 90;
 // Snapshot retrieval timeout, in milliseconds. HomeKit has a strict 5 second threshold for communication, so we set this just below that.
 export const PROTECT_SNAPSHOT_TIMEOUT = 4990;
 
+// Portion of the snapshot budget, in milliseconds, that each snapshot source holds back for the source behind it in the fallback chain. Every source is
+// bounded to the time remaining before the request's deadline, less this reserve when something is still queued up behind it. Without it, a slow source (a
+// 4K RTSP stream with a long keyframe interval, or a controller that's slow to generate a JPEG) consumes the entire budget on its own and we fall back to a
+// cached image rather than ever trying the next source.
+export const PROTECT_SNAPSHOT_FALLBACK_RESERVE = 1750;
+
 // Maximum downscale ratio (per dimension) allowed when selecting a source stream for transcoding. Streams requiring a larger downscale are filtered out
 // before selection. For example, a ratio of 2 means a 720p request allows up to ~1440p input (2x), but rejects 4K (3x). This prevents overwhelming the
 // hardware transcoder with an excessively large resolution gap.

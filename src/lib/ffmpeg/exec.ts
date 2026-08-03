@@ -98,9 +98,15 @@ export class FfmpegExec extends FfmpegProcess {
    *
    * If `stdinData` is provided, it will be written to the process's standard input before execution. Returns `null` if the process fails to start.
    *
-   * @param stdinData        - Optional. Data to write to FFmpeg's standard input.
+   * If `timeout` is provided, the process is terminated and the promise resolves to `null` once that many milliseconds have elapsed. This matters for
+   * inputs that can stall indefinitely - an RTSP source that never delivers a keyframe, for instance - where an abandoned promise would otherwise leave
+   * an FFmpeg process running for the lifetime of the plugin.
    *
-   * @returns A promise that resolves to a `ProcessResult` object containing the exit code, stdout, and stderr, or `null` if the process could not be started.
+   * @param stdinData        - Optional. Data to write to FFmpeg's standard input.
+   * @param timeout          - Optional. Milliseconds to wait before terminating the process and resolving to `null`. Omit for no timeout.
+   *
+   * @returns A promise that resolves to a `ProcessResult` object containing the exit code, stdout, and stderr, or `null` if the process could not be started
+   *   or was terminated by the timeout.
    *
    * @example
    *
@@ -115,7 +121,7 @@ export class FfmpegExec extends FfmpegProcess {
    * }
    * ```
    */
-  public async exec(stdinData?: Buffer): Promise<Nullable<ProcessResult>> {
+  public async exec(stdinData?: Buffer, timeout?: number): Promise<Nullable<ProcessResult>> {
 
     return new Promise<Nullable<ProcessResult>>((resolve) => {
 
@@ -128,6 +134,27 @@ export class FfmpegExec extends FfmpegProcess {
 
         return;
       }
+
+      // Bound the run, if we've been asked to. We resolve immediately rather than waiting for the process to actually die so that callers get their answer
+      // within the budget they asked for, and we kill FFmpeg so it can't linger. Resolving a promise is idempotent, so the exit handler below is harmless if
+      // it fires afterward.
+      let timer: NodeJS.Timeout | undefined;
+
+      if(timeout !== undefined) {
+
+        timer = setTimeout(() => {
+
+          this.log.debug('FFmpeg command timed out after %s ms. Terminating.', timeout);
+          this.stop();
+          resolve(null);
+        }, timeout);
+      }
+
+      const settle = (result: Nullable<ProcessResult>): void => {
+
+        clearTimeout(timer);
+        resolve(result);
+      };
 
       // Write data to stdin and close
       if(stdinData) {
@@ -153,14 +180,14 @@ export class FfmpegExec extends FfmpegProcess {
       // Resolving a promise is idempotent, so we can't double-settle if exit follows.
       this.process.once('error', () => {
 
-        resolve(null);
+        settle(null);
       });
 
       // Return when process is done.
       this.process.once('exit', (exitCode) => {
 
         // Return the output and results.
-        resolve({
+        settle({
 
           exitCode,
           stderr: Buffer.concat(stderr),

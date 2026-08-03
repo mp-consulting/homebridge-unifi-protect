@@ -394,7 +394,13 @@ export class FfmpegProcess extends EventEmitter {
     this.process?.stdin.destroy();
     this.process?.stdout.destroy();
 
-    // In case we need to kill it again, just to be sure it's really dead.
+    // In case we need to kill it again, just to be sure it's really dead. Stopping twice before the process has actually exited - a timed-out command that
+    // then exits, for instance - would otherwise overwrite the handle and strand the earlier timer.
+    if(this.ffmpegTimeout) {
+
+      clearTimeout(this.ffmpegTimeout);
+    }
+
     this.ffmpegTimeout = setTimeout(() => {
 
       this.process?.kill('SIGKILL');

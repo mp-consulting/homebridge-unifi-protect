@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Snapshot timeouts falling back to cached images**: Cameras that aren't actively recording to HomeKit Secure Video (so the timeshift buffer is empty) fell through to the RTSP snapshot path, where FFmpeg had to open an RTSP session against the controller's highest quality stream and wait for a full keyframe. On 4K cameras and on doorbells with low-framerate streams that regularly exceeded the entire 4990 ms snapshot budget, so the Protect controller's own snapshot API — the fast fallback that exists precisely for this case — was never reached, and every request ended in `Unable to retrieve a snapshot: using the most recent cached snapshot instead`. Snapshot sources are now budgeted against a shared per-request deadline: each source is bounded to the time actually remaining, holding back a reserve for whatever is queued up behind it. The reserve applies in both directions, so package cameras — which query the controller API first — no longer skip their RTSP fallback when the controller is slow to answer.
+- **Unbounded controller snapshot requests**: `ProtectApi.getSnapshot()` gains a `timeout` option, and the snapshot pipeline passes it its remaining budget. The controller call previously used the API client's own 3500 ms response timeout, which could outlast the caller's five-second HomeKit deadline on its own — reserving time for the fallback meant nothing while the fallback was free to overrun it.
+- **Orphaned FFmpeg snapshot processes**: Snapshot requests were bounded by a timeout that deliberately does not cancel the work behind it, and `FfmpegExec` had no timeout of its own, so every timed-out snapshot left an FFmpeg process running against a stalled RTSP session. On a camera failing repeatedly these accumulated and starved subsequent attempts of CPU — a feedback loop that made the original problem progressively worse. `FfmpegExec.exec()` now accepts a timeout and terminates the process when it overruns.
+- **Duplicate concurrent snapshot work**: Opening the Home app requests a snapshot for every camera tile at once, and each request spawned its own FFmpeg instance competing for the same RTSP stream. Identical in-flight requests for a camera are now coalesced, keyed on the requested dimensions.
+- **Silent uncropped snapshots**: When cropping failed, the full uncropped frame was substituted without comment. Since cropping is often configured to keep something out of frame deliberately, this now logs a warning.
+
 ## [1.2.0] - 2026-08-01
 
 ### Added
