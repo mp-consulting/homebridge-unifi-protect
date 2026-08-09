@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [1.2.3] - 2026-08-09
+
+### Fixed
+
+- **Config UI rendered unstyled and its controls did nothing**: Bootstrap and Bootstrap Icons were loaded from `cdn.jsdelivr.net`, which the Homebridge UI's content-security policy refuses. Both stylesheets and the script were blocked, so the page lost its styling and `bootstrap` was never defined, leaving tabs, modals and collapses inert. All three are now vendored into the plugin and served from it, alongside the icon font.
+
 ## [1.2.2] - 2026-08-09
 
 ### Changed
