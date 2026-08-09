@@ -7,7 +7,7 @@ Homebridge plugin (`@mp-consulting/homebridge-unifi-protect`) providing full Hom
 ## Tech Stack
 
 - **Language**: TypeScript (strict, ES2022, ESM via NodeNext)
-- **Runtime**: Node.js >= 20, Homebridge >= 1.8.0
+- **Runtime**: Node.js >= 22, Homebridge >= 1.8.0
 - **Testing**: Vitest with v8 coverage
 - **Linting**: ESLint 9 flat config with typescript-eslint
 - **Dependencies**: None required at runtime — the UniFi Protect API client (`src/unifi/`) and plugin utilities incl. the FFmpeg pipeline (`src/lib/`) are implemented in-repo on Node.js built-ins. `ffmpeg-for-homebridge` is an *optional* dependency resolved dynamically; when absent, FFmpeg comes from the system or the `videoProcessor` config option.
