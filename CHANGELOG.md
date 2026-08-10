@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [1.2.4] - 2026-08-10
+
+### Fixed
+
+- **The Homebridge log showed `[UniFi Protect]` instead of `[UniFi Protect]`**: Homebridge derives a plugin's log prefix from `name` in its platform config, falling back to the plugin alias when that key is absent. `config.schema.json` declared a `name` property but never listed it in `layout`, so the settings form never rendered the field and never wrote its default into `config.json`. `name` is now the first control in the form and defaults to `UniFi Protect`.
+- **404s in the browser console on every visit to the settings page**: the vendored minified Bootstrap files kept their trailing `sourceMappingURL` comment, so the browser asked for `bootstrap.min.css.map` and `bootstrap.bundle.min.js.map` and got a 404 for each. The copy step now strips the comment instead of shipping ~920 kB of source maps.
+
 ## [1.2.3] - 2026-08-09
 
 ### Fixed
