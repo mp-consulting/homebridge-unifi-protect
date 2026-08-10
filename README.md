@@ -57,6 +57,7 @@ A [Homebridge](https://homebridge.io) plugin that brings native HomeKit support 
      "platforms": [
        {
          "platform": "UniFi Protect",
+         "name": "UniFi Protect",
          "controllers": [
            {
              "address": "192.168.1.1",

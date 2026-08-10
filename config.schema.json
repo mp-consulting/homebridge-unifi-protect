@@ -248,6 +248,7 @@
   },
 
   "layout": [
+    "name",
     {
       "type": "section",
       "title": "UniFi Protect Controllers",
