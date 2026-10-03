@@ -37,12 +37,18 @@ describe('HomebridgePluginUiServer', () => {
       }
 
       return originalSend ? (originalSend as (...sendArgs: unknown[]) => boolean).call(process, message, ...args) : true;
-    }) as typeof process.send;
+    }) as NonNullable<typeof process.send>;
   });
 
   afterEach(() => {
 
-    process.send = originalSend;
+    if(originalSend) {
+
+      process.send = originalSend;
+    } else {
+
+      delete process.send;
+    }
 
     // Remove only the 'message' listeners the servers under test registered, leaving vitest's own IPC listeners untouched.
     for(const listener of process.listeners('message')) {

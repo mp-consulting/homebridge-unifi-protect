@@ -7,9 +7,11 @@ import type { API, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformCo
 import { FeatureOptions, FfmpegCodecs, RtpPortAllocator } from './lib/index.js';
 import { type ProtectOptions, featureOptionCategories, featureOptions } from './protect-options.js';
 import { APIEvent } from 'homebridge';
-import { PROTECT_MQTT_TOPIC } from './settings.js';
+import { PROTECT_MQTT_TOPIC, PROTECT_TLS_PIN_FILE } from './settings.js';
 import { ProtectNvr } from './protect-nvr.js';
+import { ProtectTlsPinStore } from './unifi/protect-tls-pin-store.js';
 import { createRequire } from 'node:module';
+import path from 'node:path';
 import util from 'node:util';
 
 // Resolve the FFmpeg binary provided by the optional ffmpeg-for-homebridge package, if it's installed. The plugin has no hard runtime dependencies - when the
@@ -35,6 +37,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly featureOptions: FeatureOptions;
   public readonly log: Logging;
   public readonly rtpPorts: RtpPortAllocator;
+  public readonly tlsPins: ProtectTlsPinStore;
   public verboseFfmpeg: boolean;
 
   constructor(log: Logging, config: PlatformConfig | undefined, api: API) {
@@ -45,6 +48,9 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, config?.options ?? []);
     this.log = log;
     this.rtpPorts = new RtpPortAllocator();
+
+    // Trust-on-first-use TLS certificate pins for our controllers, persisted in the Homebridge storage path and shared across all controllers.
+    this.tlsPins = new ProtectTlsPinStore(path.join(api.user.storagePath(), PROTECT_TLS_PIN_FILE), (message: string) => this.log.error(message));
     this.verboseFfmpeg = false;
 
     // Plugin options into our config variables.
@@ -108,7 +114,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     // Avoid a prospective race condition by waiting to configure our controllers until Homebridge is done loading
     // all the cached accessories it knows about, and calling configureAccessory() on each.
-    api.on(APIEvent.DID_FINISH_LAUNCHING, this.launchControllers.bind(this));
+    api.on(APIEvent.DID_FINISH_LAUNCHING, () => void this.launchControllers());
   }
 
   // This gets called when homebridge restores cached accessories at startup. We intentionally avoid doing anything

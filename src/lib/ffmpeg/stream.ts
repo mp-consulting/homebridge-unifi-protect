@@ -98,12 +98,12 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
   /**
    * The UDP socket used to monitor stream health. Must be closed on every teardown path to avoid leaking a bound socket per streaming session.
    */
-  private socket?: Socket;
+  private socket?: Socket | undefined;
 
   /**
    * The timeout reference used to monitor UDP stream health.
    */
-  private streamTimeout?: NodeJS.Timeout;
+  private streamTimeout?: NodeJS.Timeout | undefined;
 
   /**
    * Constructs a new FFmpeg streaming process for a HomeKit session.
@@ -254,7 +254,7 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
   /**
    * Stops the FFmpeg process and releases the stream-health socket so we don't leak a bound socket per streaming session.
    */
-  protected stopProcess(): void {
+  protected override stopProcess(): void {
 
     this.closeSocket();
 
@@ -292,7 +292,7 @@ export class FfmpegStreamingProcess extends FfmpegProcess {
    * @param exitCode - The exit code from FFmpeg.
    * @param signal   - The signal, if any, used to terminate the process.
    */
-  protected logFfmpegError(exitCode: Nullable<number>, signal: Nullable<NodeJS.Signals>): void {
+  protected override logFfmpegError(exitCode: Nullable<number>, signal: Nullable<NodeJS.Signals>): void {
 
     // We want to process known streaming-related errors due to the performance and latency tweaks we've made to the FFmpeg command line. In some cases we may
     // inform the user and take no action, in others, we tune our own internal parameters.

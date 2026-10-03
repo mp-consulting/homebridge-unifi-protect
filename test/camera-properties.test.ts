@@ -1,120 +1,23 @@
 /* Copyright(C) 2019-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
  *
- * camera-properties.test.ts: Tests for camera property mappings and helper logic from protect-camera.ts.
+ * camera-properties.test.ts: Tests for camera property helpers in ProtectCamera and the UniFi Protect recording switches in ProtectCameraControls.
  *
- * Tests the night vision brightness mapping, HKSV capability checks, and crop parameter clamping
- * without requiring Homebridge dependencies.
+ * The night vision mode/brightness mappings are exercised through the real dimmer in night-vision-dimmer.test.ts.
  */
-
-describe('Night Vision Brightness Mapping', () => {
-
-  // Reproduction of ProtectCamera.NIGHT_VISION_MAP.
-  const NIGHT_VISION_MAP = new Map<string, number>([
-    ['off', 0],
-    ['autoFilterOnly', 5],
-    ['auto', 10],
-    ['on', 100],
-  ]);
-
-  // Reproduction of ProtectCamera.NIGHT_VISION_BRIGHTNESS_MAP.
-  const NIGHT_VISION_BRIGHTNESS_MAP = new Map<number, string>([
-    [0, 'off'],
-    [5, 'autoFilterOnly'],
-    [10, 'auto'],
-    [100, 'on'],
-  ]);
-
-  describe('mode to brightness', () => {
-
-    it('maps "off" to 0', () => {
-
-      expect(NIGHT_VISION_MAP.get('off')).toBe(0);
-    });
-
-    it('maps "autoFilterOnly" to 5', () => {
-
-      expect(NIGHT_VISION_MAP.get('autoFilterOnly')).toBe(5);
-    });
-
-    it('maps "auto" to 10', () => {
-
-      expect(NIGHT_VISION_MAP.get('auto')).toBe(10);
-    });
-
-    it('maps "on" to 100', () => {
-
-      expect(NIGHT_VISION_MAP.get('on')).toBe(100);
-    });
-
-    it('returns undefined for unknown mode', () => {
-
-      expect(NIGHT_VISION_MAP.get('unknown')).toBeUndefined();
-    });
-
-    it('contains exactly 4 entries', () => {
-
-      expect(NIGHT_VISION_MAP.size).toBe(4);
-    });
-  });
-
-  describe('brightness to mode', () => {
-
-    it('maps 0 to "off"', () => {
-
-      expect(NIGHT_VISION_BRIGHTNESS_MAP.get(0)).toBe('off');
-    });
-
-    it('maps 5 to "autoFilterOnly"', () => {
-
-      expect(NIGHT_VISION_BRIGHTNESS_MAP.get(5)).toBe('autoFilterOnly');
-    });
-
-    it('maps 10 to "auto"', () => {
-
-      expect(NIGHT_VISION_BRIGHTNESS_MAP.get(10)).toBe('auto');
-    });
-
-    it('maps 100 to "on"', () => {
-
-      expect(NIGHT_VISION_BRIGHTNESS_MAP.get(100)).toBe('on');
-    });
-
-    it('returns undefined for unmapped brightness values', () => {
-
-      expect(NIGHT_VISION_BRIGHTNESS_MAP.get(50)).toBeUndefined();
-    });
-  });
-
-  describe('round-trip consistency', () => {
-
-    it('mode -> brightness -> mode is identity for all known modes', () => {
-
-      for(const [mode, brightness] of NIGHT_VISION_MAP) {
-
-        expect(NIGHT_VISION_BRIGHTNESS_MAP.get(brightness)).toBe(mode);
-      }
-    });
-
-    it('brightness -> mode -> brightness is identity for all known brightnesses', () => {
-
-      for(const [brightness, mode] of NIGHT_VISION_BRIGHTNESS_MAP) {
-
-        expect(NIGHT_VISION_MAP.get(mode)).toBe(brightness);
-      }
-    });
-  });
-});
+import * as hap from '@homebridge/hap-nodejs';
+import { describe, expect, it, vi } from 'vitest';
+import { ProtectCamera } from '../src/devices/protect-camera.js';
+import { ProtectCameraControls } from '../src/devices/protect-camera-controls.js';
+import { ProtectReservedNames } from '../src/protect-types.js';
 
 describe('isHksvCapable', () => {
 
-  // Reproduction of the ProtectCamera.isHksvCapable property logic.
-  function isHksvCapable(ufp: {
-    isThirdPartyCamera: boolean;
-    isAdoptedByAccessApp: boolean;
-    isPairedWithAiPort: boolean;
-  }): boolean {
+  // The real isHksvCapable getter from ProtectCamera.
+  const isHksvCapableGetter = Object.getOwnPropertyDescriptor(ProtectCamera.prototype, 'isHksvCapable')?.get as (this: unknown) => boolean;
 
-    return (!ufp.isThirdPartyCamera && !ufp.isAdoptedByAccessApp) || (ufp.isThirdPartyCamera && ufp.isPairedWithAiPort);
+  function isHksvCapable(ufp: { isAdoptedByAccessApp: boolean; isPairedWithAiPort: boolean; isThirdPartyCamera: boolean }): boolean {
+
+    return isHksvCapableGetter.call({ ufp });
   }
 
   it('returns true for native Protect camera', () => {
@@ -145,69 +48,112 @@ describe('isHksvCapable', () => {
 
 describe('Crop Parameter Clamping', () => {
 
-  // Reproduction of the clampCrop helper from ProtectCamera.configureCrop().
-  function clampCrop(value: number, fallback: number): number {
+  // The real private configureCrop() from ProtectCamera.
+  const configureCrop = (ProtectCamera.prototype as unknown as { configureCrop: (this: unknown) => boolean }).configureCrop;
 
-    return ((value < 0) || (value > 100)) ? fallback : value;
+  // Run configureCrop() against a fake camera whose crop feature options are set as requested, returning the resulting crop hints.
+  function crop(options: Partial<Record<'Height' | 'Width' | 'X' | 'Y', number>>, enabled = true): unknown {
+
+    const hints: Record<string, unknown> = { crop: enabled };
+
+    configureCrop.call({
+
+      getFeatureNumber: (option: string): number | undefined => options[option.slice('Video.Crop.'.length) as keyof typeof options],
+      hints,
+      log: { info: vi.fn() },
+    });
+
+    return hints.cropOptions;
   }
 
-  it('returns value within valid range', () => {
+  it('does nothing when cropping is disabled', () => {
 
-    expect(clampCrop(50, 0)).toBe(50);
+    expect(crop({ Width: 50 }, false)).toBeUndefined();
   });
 
-  it('returns value at lower boundary (0)', () => {
+  it('defaults to the full frame when no crop options are set', () => {
 
-    expect(clampCrop(0, 0)).toBe(0);
+    expect(crop({})).toEqual({ height: 1, width: 1, x: 0, y: 0 });
   });
 
-  it('returns value at upper boundary (100)', () => {
+  it('converts in-range percentages to decimals', () => {
 
-    expect(clampCrop(100, 0)).toBe(100);
+    expect(crop({ Height: 50, Width: 75, X: 10, Y: 20 })).toEqual({ height: 0.5, width: 0.75, x: 0.1, y: 0.2 });
   });
 
-  it('returns fallback for negative value', () => {
+  it('accepts the 0 and 100 boundaries', () => {
 
-    expect(clampCrop(-1, 0)).toBe(0);
+    expect(crop({ Height: 100, Width: 0, X: 100, Y: 0 })).toEqual({ height: 1, width: 0, x: 1, y: 0 });
   });
 
-  it('returns fallback for value above 100', () => {
+  it('falls back to 100% for out-of-range width and height', () => {
 
-    expect(clampCrop(101, 100)).toBe(100);
+    expect(crop({ Height: 101, Width: -1 })).toEqual({ height: 1, width: 1, x: 0, y: 0 });
   });
 
-  it('returns fallback for very large negative value', () => {
+  it('falls back to 0% for out-of-range x and y', () => {
 
-    expect(clampCrop(-999, 50)).toBe(50);
-  });
-
-  it('returns fallback for very large positive value', () => {
-
-    expect(clampCrop(1000, 50)).toBe(50);
-  });
-
-  it('uses different fallback values for width vs x', () => {
-
-    // Width defaults to 100, x defaults to 0 — matching the actual usage.
-    expect(clampCrop(-5, 100)).toBe(100); // Width fallback.
-    expect(clampCrop(-5, 0)).toBe(0);     // X/Y fallback.
+    expect(crop({ X: -999, Y: 1000 })).toEqual({ height: 1, width: 1, x: 0, y: 0 });
   });
 });
 
 describe('UFP Recording Switches', () => {
 
-  // Verify the recording switch constant values match expected pattern.
-  // These are from ProtectReservedNames enum.
-  it('should define exactly 3 recording switch modes', () => {
+  const switchTypes = [
 
-    // Mirrors ProtectCamera.UFP_RECORDING_SWITCHES.
-    const switches = [
-      'Switch.UniFi Protect.Recording.Always',
-      'Switch.UniFi Protect.Recording.Detections',
-      'Switch.UniFi Protect.Recording.Never',
-    ];
+    ProtectReservedNames.SWITCH_UFP_RECORDING_ALWAYS,
+    ProtectReservedNames.SWITCH_UFP_RECORDING_DETECTIONS,
+    ProtectReservedNames.SWITCH_UFP_RECORDING_NEVER,
+  ];
 
-    expect(switches).toHaveLength(3);
-    expect(new Set(switches).size).toBe(3);
+  // Configure the real controls delegate against a fake camera with the recording switches enabled.
+  function makeCamera(mode: string): { accessory: hap.Accessory; writeDevice: ReturnType<typeof vi.fn> } {
+
+    const accessory = new hap.Accessory('Camera', hap.uuid.generate('recording-switches-' + mode));
+    const writeDevice = vi.fn(async (): Promise<boolean> => true);
+
+    const camera = {
+
+      accessory,
+      accessoryName: 'Camera',
+      api: { hap },
+      hasFeature: (): boolean => false,
+      hints: { ledStatus: false, nightVision: false, nightVisionDimmer: false, nvrRecordingSwitch: true },
+      isHksvCapable: true,
+      log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+      ufp: { ispSettings: { irLedMode: 'auto' }, recordingSettings: { mode, retentionDurationMs: 1 } },
+      writeDevice,
+    };
+
+    new ProtectCameraControls(camera as unknown as ProtectCamera).configure();
+
+    return { accessory, writeDevice };
+  }
+
+  it('creates exactly one switch per Protect recording mode', () => {
+
+    const { accessory } = makeCamera('always');
+
+    expect(accessory.services.filter(service => service.UUID === hap.Service.Switch.UUID).map(service => service.subtype)).toEqual(switchTypes);
+  });
+
+  it('turns on only the switch matching the current recording mode', () => {
+
+    const { accessory } = makeCamera('detections');
+
+    expect(switchTypes.map(type => accessory.getServiceById(hap.Service.Switch, type)?.getCharacteristic(hap.Characteristic.On).value))
+      .toEqual([ false, true, false ]);
+  });
+
+  it('writes the selected mode to Protect, preserving other recording settings, and turns the other switches off', async () => {
+
+    const { accessory, writeDevice } = makeCamera('always');
+
+    await accessory.getServiceById(hap.Service.Switch, ProtectReservedNames.SWITCH_UFP_RECORDING_NEVER)?.getCharacteristic(hap.Characteristic.On)
+      .handleSetRequest(true);
+
+    expect(writeDevice.mock.calls[0]?.[0]).toEqual({ recordingSettings: { mode: 'never', retentionDurationMs: 1 } });
+    expect(accessory.getServiceById(hap.Service.Switch, ProtectReservedNames.SWITCH_UFP_RECORDING_ALWAYS)?.getCharacteristic(hap.Characteristic.On).value)
+      .toBe(false);
   });
 });

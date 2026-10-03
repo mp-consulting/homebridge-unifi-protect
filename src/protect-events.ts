@@ -3,21 +3,28 @@
  *
  * protect-events.ts: Protect events class for UniFi Protect.
  */
-import type { API, HAP, Service } from 'homebridge';
+import type { HAP, Service } from 'homebridge';
 import type { HomebridgePluginLogging, Nullable } from './lib/index.js';
 import type { ProtectApi, ProtectEventAdd, ProtectEventMetadata, ProtectEventMetadataDetectedThumbnail, ProtectEventPacket,
   ProtectKnownDeviceTypes } from './unifi/index.js';
 import type { ProtectCamera, ProtectDevice } from './devices/index.js';
-import { type ProtectDeviceConfigTypes, ProtectReservedNames } from './protect-types.js';
+import { ProtectDeviceCategories, type ProtectDeviceConfigTypes, ProtectReservedNames } from './protect-types.js';
 import { EventEmitter } from 'node:events';
 import { PROTECT_DOORBELL_TRIGGER_DURATION } from './settings.js';
 import type { ProtectNvr } from './protect-nvr.js';
-import type { ProtectPlatform } from './protect-platform.js';
 import { mergeJson } from './protect-utils.js';
+
+// A smart detection event, either a legacy smart detection or a thumbnail-based detection.
+type SmartEventItem = {
+
+  type: string;
+  name?: string | undefined;
+  confidence?: number | undefined;
+  payload?: ProtectEventMetadataDetectedThumbnail;
+};
 
 export class ProtectEvents extends EventEmitter {
 
-  private api: API;
   private hap: HAP;
   private log: HomebridgePluginLogging;
   private mqttPublishTelemetry: boolean;
@@ -25,15 +32,12 @@ export class ProtectEvents extends EventEmitter {
   private readonly eventTimers: Map<string, NodeJS.Timeout | undefined>;
   private ufpApi: ProtectApi;
   private ufpDeviceState: Record<string, ProtectDeviceConfigTypes>;
-  private platform: ProtectPlatform;
-  private unsupportedDevices: Record<string, boolean>;
 
   // Initialize an instance of our Protect events handler.
   constructor(nvr: ProtectNvr) {
 
     super();
 
-    this.api = nvr.platform.api;
     this.eventTimers = new Map();
     this.hap = nvr.platform.api.hap;
     this.log = nvr.log;
@@ -41,8 +45,6 @@ export class ProtectEvents extends EventEmitter {
     this.nvr = nvr;
     this.ufpApi = nvr.ufpApi;
     this.ufpDeviceState = {};
-    this.platform = nvr.platform;
-    this.unsupportedDevices = {};
 
     // If we've enabled telemetry from the controller inform the user.
     if(this.mqttPublishTelemetry) {
@@ -56,7 +58,7 @@ export class ProtectEvents extends EventEmitter {
   // Merge Protect JSON update payloads into the Protect configuration JSON for a device while dealing with deep objects.
   private updateUfp<DeviceType extends ProtectKnownDeviceTypes>(ufp: DeviceType, payload: unknown): DeviceType {
 
-    return mergeJson(ufp as unknown as Record<string, unknown>, payload as Record<string, unknown>) as DeviceType;
+    return mergeJson(ufp, payload as Record<string, unknown>) as DeviceType;
   }
 
   // Manage event timers - clears any existing timer for the key, sets a new one, and auto-deletes on expiry.
@@ -124,8 +126,11 @@ export class ProtectEvents extends EventEmitter {
         break;
     }
 
-    // Update the internal list we maintain.
-    this.ufpDeviceState[packet.header.id] = Object.assign(this.ufpDeviceState[packet.header.id] ?? {}, payload);
+    // Update the internal list we maintain. We only track devices - events and other model types carry unique ids that would otherwise accumulate forever.
+    if((ProtectDeviceCategories as readonly string[]).includes(packet.header.modelKey)) {
+
+      this.ufpDeviceState[packet.header.id] = Object.assign(this.ufpDeviceState[packet.header.id] ?? {}, payload);
+    }
   }
 
   // Process device additions and removals from the Protect update events API.
@@ -148,16 +153,20 @@ export class ProtectEvents extends EventEmitter {
     // Lookup the device.
     const deviceId = (payload.metadata.deviceId as Record<string, unknown>).text as string;
     const protectDevice = this.nvr.getDeviceById(deviceId);
+    const deviceState = this.ufpDeviceState[deviceId];
+
+    // Either way, we no longer need the state we've accumulated for this device.
+    delete this.ufpDeviceState[deviceId];
 
     // We're adopting.
     if(payload.type === 'deviceAdopted') {
 
-      if(protectDevice) {
+      if(protectDevice || !deviceState) {
 
         return;
       }
 
-      this.nvr.addHomeKitDevice(this.ufpDeviceState[deviceId]);
+      this.nvr.addHomeKitDevice(deviceState);
 
       return;
     }
@@ -257,7 +266,7 @@ export class ProtectEvents extends EventEmitter {
   private motionEventDelivery(protectDevice: ProtectDevice, motionService: Service, detectedObjects: string[], metadata: ProtectEventMetadata = {}): void {
 
     // If we have disabled motion events, we're done here.
-    if(protectDevice.accessory.context.detectMotion === false) {
+    if(protectDevice.context.detectMotion === false) {
 
       return;
     }
@@ -266,15 +275,7 @@ export class ProtectEvents extends EventEmitter {
     this.handleMotionEvent(protectDevice, motionService);
 
     // We build a unified list of the object events we're interested in: legacy smart detections first, followed by thumbnail-based detections.
-    type EventItem = {
-
-      type: string;
-      name?: string;
-      confidence?: number;
-      payload?: ProtectEventMetadataDetectedThumbnail;
-    };
-
-    const smartEvents: EventItem[] = [];
+    const smartEvents: SmartEventItem[] = [];
 
     // Only look for smart detections if we're configured to do so.
     if(protectDevice.hints.smartDetect) {
@@ -342,8 +343,7 @@ export class ProtectEvents extends EventEmitter {
   }
 
   // Smart object detection sensors and MQTT publishing.
-  private handleSmartDetection(protectDevice: ProtectDevice, smartEvents: { type: string; name?: string; confidence?: number;
-    payload?: ProtectEventMetadataDetectedThumbnail }[]): void {
+  private handleSmartDetection(protectDevice: ProtectDevice, smartEvents: SmartEventItem[]): void {
 
     // Iterate over the smart events that Protect has detected.
     for(const event of smartEvents) {
@@ -388,8 +388,7 @@ export class ProtectEvents extends EventEmitter {
   }
 
   // License plate specific handling (subset of vehicle smart detection).
-  private handleLicensePlate(protectDevice: ProtectDevice, event: { type: string; name?: string; confidence?: number;
-    payload?: ProtectEventMetadataDetectedThumbnail }, key: string): void {
+  private handleLicensePlate(protectDevice: ProtectDevice, event: SmartEventItem, key: string): void {
 
     // We have a license plate. Let's see if we have a match with what the user has configured.
     if(event.name) {
@@ -466,11 +465,12 @@ export class ProtectEvents extends EventEmitter {
 
         const occupancyKey = protectDevice.id + '.Motion.OccupancySensor';
 
-        // If the occupancy sensor isn't already triggered, let's do so now.
-        if(occupancyService.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value !== true) {
+        // If the occupancy sensor isn't already triggered, let's do so now. HAP stores this characteristic as a numeric state, not a boolean.
+        if(occupancyService.getCharacteristic(this.hap.Characteristic.OccupancyDetected).value !==
+          this.hap.Characteristic.OccupancyDetected.OCCUPANCY_DETECTED) {
 
           // Trigger the occupancy event in HomeKit.
-          occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, true);
+          occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, this.hap.Characteristic.OccupancyDetected.OCCUPANCY_DETECTED);
 
           // Publish the occupancy event to MQTT, if the user has configured it.
           this.nvr.mqtt?.publish(protectDevice.ufp.mac, 'occupancy', 'true');
@@ -487,7 +487,7 @@ export class ProtectEvents extends EventEmitter {
         this.resetTimer(occupancyKey, () => {
 
           // Reset the occupancy sensor.
-          occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
+          occupancyService.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, this.hap.Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
 
           // Publish to MQTT, if the user has configured it.
           this.nvr.mqtt?.publish(protectDevice.ufp.mac, 'occupancy', 'false');
@@ -525,7 +525,7 @@ export class ProtectEvents extends EventEmitter {
     }
 
     // Trigger the doorbell event in HomeKit, if we're configured to do so.
-    if(!protectDevice.accessory.context.doorbellMuted) {
+    if(!protectDevice.context.doorbellMuted) {
 
       doorbellService.getCharacteristic(this.hap.Characteristic.ProgrammableSwitchEvent)
         .sendEventNotification(this.hap.Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS);

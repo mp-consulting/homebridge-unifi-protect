@@ -1,90 +1,98 @@
 /* Copyright(C) 2017-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
  *
- * timeshift-buffer.test.ts: Tests for timeshift buffer arithmetic from protect-timeshift.ts.
+ * timeshift-buffer.test.ts: Tests for the timeshift buffer in ProtectTimeshiftBuffer (protect-timeshift.ts).
  *
- * These tests validate the buffer sizing, time calculations, and segment slicing logic
- * without requiring the full ProtectTimeshiftBuffer class or its Homebridge dependencies.
+ * These tests validate the buffer sizing, time calculations, and segment slicing logic of the real ProtectTimeshiftBuffer, fed by a fake livestream.
  */
+import { EventEmitter } from 'node:events';
+import { describe, expect, it, vi } from 'vitest';
+import type { ProtectCamera } from '../src/devices/index.js';
+import { ProtectTimeshiftBuffer } from '../src/protect-timeshift.js';
+import type { RtspEntry } from '../src/devices/protect-camera.js';
 
-// Reproduction of the timeshift buffer arithmetic from ProtectTimeshiftBuffer.
+// A fake livestream: an event emitter that carries the fMP4 initialization segment.
+class FakeLivestream extends EventEmitter {
+
+  public initSegment: Buffer | null = null;
+
+  public async getInitSegment(): Promise<Buffer> {
+
+    return Promise.reject(new Error('stopped'));
+  }
+}
+
+// Build a fake camera whose livestream manager hands out the given fake livestream.
+function makeCamera(livestream: FakeLivestream): ProtectCamera {
+
+  return {
+
+    hasFeature: (): boolean => false,
+    livestream: { acquire: (): FakeLivestream => livestream, isRestarting: (): boolean => false, start: async (): Promise<boolean> => true, stop: vi.fn() },
+    log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+  } as unknown as ProtectCamera;
+}
+
+// A harness around the real ProtectTimeshiftBuffer. Segments are delivered through the buffer's own livestream segment handler, exactly as a live
+// livestream would deliver them.
 class TimeshiftBufferModel {
 
-  private _buffer: Buffer[] = [];
-  private _segmentLength: number;
-  private segmentCount: number;
-  private initSegment: Buffer | null = null;
+  public readonly livestream = new FakeLivestream();
+  public readonly real: ProtectTimeshiftBuffer;
 
   constructor(segmentLength: number, segmentCount = 1) {
 
-    this._segmentLength = segmentLength;
-    this.segmentCount = segmentCount;
+    this.real = new ProtectTimeshiftBuffer(makeCamera(this.livestream));
+
+    const internals = this.real as unknown as { _segmentLength: number; livestream: FakeLivestream };
+
+    internals._segmentLength = segmentLength;
+    internals.livestream = this.livestream;
+    this.real.configuredDuration = segmentCount * segmentLength;
   }
 
   setInitSegment(segment: Buffer): void {
 
-    this.initSegment = segment;
+    this.livestream.initSegment = segment;
   }
 
   push(segment: Buffer): void {
 
-    this._buffer.push(segment);
-
-    if(this._buffer.length > this.segmentCount) {
-
-      this._buffer.shift();
-    }
+    (this.real as unknown as { eventHandlers: { segment: (segment: Buffer) => void } }).eventHandlers.segment(segment);
   }
 
   get time(): number {
 
-    return this._buffer.length * this._segmentLength;
+    return this.real.time;
   }
 
   get configuredDuration(): number {
 
-    return this.segmentCount * this._segmentLength;
+    return this.real.configuredDuration;
   }
 
   set configuredDuration(bufferMillis: number) {
 
-    this.segmentCount = Math.max(bufferMillis / this._segmentLength, 1);
-  }
-
-  get segmentLength(): number {
-
-    return this._segmentLength;
+    this.real.configuredDuration = bufferMillis;
   }
 
   get bufferLength(): number {
 
-    return this._buffer.length;
+    return (this.real as unknown as { _buffer: Buffer[] })._buffer.length;
   }
 
   get buffer(): Buffer | null {
 
-    return (this.initSegment && this._buffer.length) ? Buffer.concat([this.initSegment, ...this._buffer]) : null;
+    return this.real.buffer;
   }
 
   getLast(duration: number): Buffer | null {
 
-    if(!duration) {
-
-      return null;
-    }
-
-    const start = duration / this._segmentLength;
-
-    if(start >= this._buffer.length) {
-
-      return this.buffer;
-    }
-
-    return (this.initSegment && this._buffer.length) ? Buffer.concat([this.initSegment, ...this._buffer.slice(start * -1)]) : null;
+    return this.real.getLast(duration);
   }
 
   isInitSegment(segment: Buffer): boolean {
 
-    return this.initSegment?.equals(segment) ?? false;
+    return this.real.isInitSegment(segment);
   }
 }
 
@@ -349,5 +357,72 @@ describe('Timeshift Buffer Arithmetic', () => {
 
       expect(buffer.time).toBe(1000);
     });
+  });
+});
+
+describe('Timeshift Buffer livestream lifecycle', () => {
+
+  const rtspEntry = { channel: { id: 0 } } as RtspEntry;
+
+  it('starts with the default segment resolution and fills from livestream segments', async () => {
+
+    const livestream = new FakeLivestream();
+    const buffer = new ProtectTimeshiftBuffer(makeCamera(livestream));
+
+    livestream.initSegment = Buffer.from('I');
+
+    await expect(buffer.start(rtspEntry)).resolves.toBe(true);
+    expect(buffer.isStarted).toBe(true);
+
+    buffer.configuredDuration = buffer.segmentLength * 2;
+    livestream.emit('segment', Buffer.from('A'));
+    livestream.emit('segment', Buffer.from('B'));
+    livestream.emit('segment', Buffer.from('C'));
+
+    expect(buffer.buffer?.toString()).toBe('IBC');
+  });
+
+  it('fails to start, and stops, when no initialization segment arrives', async () => {
+
+    const livestream = new FakeLivestream();
+    const buffer = new ProtectTimeshiftBuffer(makeCamera(livestream));
+
+    await expect(buffer.start(rtspEntry)).resolves.toBe(false);
+    expect(buffer.isStarted).toBe(false);
+  });
+
+  it('transmits the queued buffer first, then forwards live segments while transmitting', async () => {
+
+    const livestream = new FakeLivestream();
+    const buffer = new ProtectTimeshiftBuffer(makeCamera(livestream));
+    const emitted: string[] = [];
+
+    livestream.initSegment = Buffer.from('I');
+    await buffer.start(rtspEntry);
+    buffer.configuredDuration = buffer.segmentLength * 10;
+    buffer.on('segment', (segment: Buffer) => emitted.push(segment.toString()));
+
+    livestream.emit('segment', Buffer.from('A'));
+    await expect(buffer.transmitStart()).resolves.toBe(true);
+    livestream.emit('segment', Buffer.from('B'));
+    buffer.transmitStop();
+    livestream.emit('segment', Buffer.from('C'));
+
+    expect(emitted).toEqual([ 'IA', 'B' ]);
+  });
+
+  it('clears the buffer when stopped', async () => {
+
+    const livestream = new FakeLivestream();
+    const buffer = new ProtectTimeshiftBuffer(makeCamera(livestream));
+
+    livestream.initSegment = Buffer.from('I');
+    await buffer.start(rtspEntry);
+    livestream.emit('segment', Buffer.from('A'));
+    buffer.stop();
+
+    expect(buffer.time).toBe(0);
+    expect(buffer.buffer).toBeNull();
+    expect(livestream.listenerCount('segment')).toBe(0);
   });
 });

@@ -10,16 +10,16 @@ import { ProtectStreamingDelegate } from '../protect-stream.js';
 import { toCamelCase } from '../protect-utils.js';
 
 // Options for tuning our RTSP lookups.
-type RtspOptions = Partial<{
+type RtspOptions = {
 
-  biasHigher: boolean;
-  default: string;
-  maxPixels: number;
-  rtspEntries: RtspEntry[];
-}>;
+  biasHigher?: boolean | undefined;
+  default?: string | undefined;
+  maxPixels?: number | undefined;
+  rtspEntries?: RtspEntry[] | undefined;
+};
 
 // Sort RTSP entries by resolution from highest to lowest.
-function sortByResolutions(a: RtspEntry, b: RtspEntry): number {
+export function sortByResolutions(a: RtspEntry, b: RtspEntry): number {
 
   return (b.resolution[0] - a.resolution[0]) || (b.resolution[1] - a.resolution[1]) || (b.resolution[2] - a.resolution[2]);
 }
@@ -61,7 +61,7 @@ export class ProtectCameraVideo {
       const sourceChannel = [ ...this.camera.ufp.channels ].sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
 
       // Sanity check in case Protect reports nonsensical resolutions.
-      if(!sourceChannel.name || (sourceChannel.width <= 0) || (sourceChannel.width > 65535) || (sourceChannel.height <= 0) ||
+      if(!sourceChannel?.name || (sourceChannel.width <= 0) || (sourceChannel.width > 65535) || (sourceChannel.height <= 0) ||
         (sourceChannel.height > 65535)) {
 
         this.camera.log.warn('RTSP override is set but the camera channels report invalid resolutions. Streaming cannot be configured.');
@@ -134,25 +134,28 @@ export class ProtectCameraVideo {
       }
     }
 
+    // Sort the list of resolutions, from high to low.
+    rtspEntries.sort(sortByResolutions);
+
+    // The first entry is our highest resolution option that's native to the camera.
+    const [ nativeEntry ] = rtspEntries;
+
     // No RTSP entries were produced (channels reported all-invalid resolutions). Bail rather than continue with an empty list.
-    if(!rtspEntries.length) {
+    if(!nativeEntry) {
 
       this.camera.log.warn('No usable RTSP streams could be derived for this camera. Streaming cannot be configured.');
 
       return false;
     }
 
-    // Sort the list of resolutions, from high to low.
-    rtspEntries.sort(sortByResolutions);
-
-    let validResolutions;
+    let validResolutions: [ number, number ][];
 
     // Next, ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch, while respecting aspect
     // ratios. We use the frame rate of the first entry, which should be our highest resolution option that's native to the camera as the upper bound
     // for frame rate.
     //
     // Our supported resolutions range from 4K through 320p.
-    if((rtspEntries[0].resolution[0] / rtspEntries[0].resolution[1]) === (4 / 3)) {
+    if((nativeEntry.resolution[0] / nativeEntry.resolution[1]) === (4 / 3)) {
 
       validResolutions = [
 
@@ -173,15 +176,15 @@ export class ProtectCameraVideo {
     }
 
     // Generate a list of valid resolutions that support both 30 and 15fps.
-    validResolutions = validResolutions.flatMap(([ width, height ]) => [ 30, 15 ].map(fps => [ width, height, fps ]));
+    const candidateResolutions = validResolutions.flatMap(([ width, height ]) => [ 30, 15 ].map(fps => [ width, height, fps ] as const));
 
     // Validate and add our entries to the list of what we make available to HomeKit. We map these resolutions to the channels we have available to us
     // on the camera.
-    for(const entry of validResolutions) {
+    for(const entry of candidateResolutions) {
 
       // This resolution is larger than the highest resolution on the camera, natively. We make an exception for 1080p and 720p resolutions since
       // HomeKit explicitly requires them.
-      if((entry[0] >= rtspEntries[0].resolution[0]) && ![ 1920, 1280 ].includes(entry[0])) {
+      if((entry[0] >= nativeEntry.resolution[0]) && ![ 1920, 1280 ].includes(entry[0])) {
 
         continue;
       }
@@ -210,28 +213,30 @@ export class ProtectCameraVideo {
     // Ensure we've got at least one entry that can be used for HomeKit Secure Video. Some Protect cameras (e.g. G3 Flex) don't have a native frame
     // rate that maps to HomeKit's specific requirements for event recording, so we ensure there's at least one. This doesn't directly affect which
     // stream is used to actually record something, but it does determine whether HomeKit even attempts to use the camera for HomeKit Secure Video.
-    if(![ 15, 24, 30 ].includes(rtspEntries[0].resolution[2])) {
+    const [ topEntry ] = rtspEntries;
+
+    if(topEntry && ![ 15, 24, 30 ].includes(topEntry.resolution[2])) {
 
       // Iterate through the list of RTSP entries we're providing to HomeKit and ensure we have at least one that will meet HomeKit's requirements
       // for frame rate.
-      for(let i = 0; i < rtspEntries.length; i++) {
+      for(const { resolution } of rtspEntries) {
 
         // We're only interested in the first 1080p or 1440p entry.
-        if((rtspEntries[i].resolution[0] !== 1920) || ![ 1080, 1440 ].includes(rtspEntries[i].resolution[1])) {
+        if((resolution[0] !== 1920) || ![ 1080, 1440 ].includes(resolution[1])) {
 
           continue;
         }
 
         // Determine the best frame rate to use that's closest to what HomeKit wants to see.
-        if(rtspEntries[i].resolution[2] > 24) {
+        if(resolution[2] > 24) {
 
-          rtspEntries[i].resolution[2] = 30;
-        } else if(rtspEntries[i].resolution[2] > 15) {
+          resolution[2] = 30;
+        } else if(resolution[2] > 15) {
 
-          rtspEntries[i].resolution[2] = 24;
+          resolution[2] = 24;
         } else {
 
-          rtspEntries[i].resolution[2] = 15;
+          resolution[2] = 15;
         }
 
         break;
@@ -257,16 +262,18 @@ export class ProtectCameraVideo {
     }
 
     // Check for explicit RTSP profile preferences.
-    for(const rtspProfile of [ 'LOW', 'MEDIUM', 'HIGH' ]) {
+    for(const profile of [ 'Low', 'Medium', 'High' ] as const) {
+
+      const rtspProfile = profile.toUpperCase();
 
       // Check to see if the user has requested a specific streaming profile for this camera.
-      if(this.camera.hasFeature('Video.Stream.Only.' + rtspProfile)) {
+      if(this.camera.hasFeature(`Video.Stream.Only.${profile}`)) {
 
         this.camera.hints.streamingDefault = rtspProfile;
       }
 
       // Check to see if the user has requested a specific recording profile for this camera.
-      if(this.camera.hasFeature('Video.HKSV.Record.Only.' + rtspProfile)) {
+      if(this.camera.hasFeature(`Video.HKSV.Record.Only.${profile}`)) {
 
         this.camera.hints.recordingDefault = rtspProfile;
       }
@@ -352,12 +359,12 @@ export class ProtectCameraVideo {
     // available as a backstop.
     if(!options?.biasHigher) {
 
-      return rtspEntries.find(x => x.channel.width < width) ?? rtspEntries[rtspEntries.length - 1];
+      return rtspEntries.find(x => x.channel.width < width) ?? rtspEntries.at(-1) ?? null;
     }
 
     // If we're biasing ourselves toward higher resolutions (primarily used when transcoding so we start with a higher quality input), we look for the
     // first entry that's larger than our requested width and if not found, we return the highest resolution we have available.
-    return rtspEntries.filter(x => x.channel.width > width).pop() ?? rtspEntries[0];
+    return rtspEntries.filter(x => x.channel.width > width).pop() ?? rtspEntries[0] ?? null;
   }
 
   // Find a streaming RTSP configuration for a given target resolution.

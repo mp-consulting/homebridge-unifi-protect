@@ -40,6 +40,9 @@ Getting `homebridge-unifi-protect` connected to UniFi Protect is the foundationa
 
 * Have you correctly entered the username and password of the local user account you've created for HBUP?
 
+* Are you seeing an error that the TLS certificate presented by your controller does not match the pinned certificate?
+  * HBUP pins your controller's certificate the first time it connects and refuses to connect if it later changes. If you replaced the certificate or a controller update regenerated it, see [TLS certificate pinning](https://github.com/mp-consulting/homebridge-unifi-protect/blob/main/docs/configuration-reference.md#tls-pinning) for how to reset the pin.
+
 * Are you using a Ubiquiti cloud account to login and have two-factor authentication configured?
   * Unfortunately, `homebridge-unifi-protect` does not support two-factor authentication. See the [documentation to create a local user account on your UniFi Protect controller](https://github.com/mp-consulting/homebridge-unifi-protect/blob/main/README.md#prerequisites).
 

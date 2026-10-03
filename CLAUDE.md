@@ -18,7 +18,7 @@ Homebridge plugin (`@mp-consulting/homebridge-unifi-protect`) providing full Hom
 - `npm run lint` — Lint with zero warnings
 - `npm test` — Run tests (Vitest)
 - `npm run test:coverage` — Tests with coverage
-- `npm run watch` — Build, link, and watch with nodemon
+- `npm run watch` — Build, link, and rerun Homebridge on changes (node --watch, scripts/watch.mjs)
 - `npm run start` — Build and launch Homebridge with test config
 - `npm run monitor:events` — Run event schema monitor script
 
@@ -31,22 +31,30 @@ src/
 ├── protect-platform.ts         # ProtectPlatform (DynamicPlatformPlugin)
 ├── protect-nvr.ts              # NVR controller management
 ├── protect-events.ts           # WebSocket event handling
-├── protect-stream.ts           # Video streaming pipeline (RTP/RTCP, talkback)
+├── protect-stream.ts           # Video streaming pipeline (RTP/RTCP)
+├── protect-talkback.ts         # Two-way audio (return audio) for streaming sessions
+├── protect-probesize.ts        # FFmpeg probesize auto-tuning
 ├── protect-livestream.ts       # Livestream API wrapper
 ├── protect-record.ts           # HKSV recording management
 ├── protect-snapshot.ts         # Snapshot caching
 ├── protect-timeshift.ts        # Timeshift buffer (fMP4 segments)
-├── protect-playlist.ts         # M3U playlist server
+├── protect-playlist.ts         # M3U playlist server (optional bind address and access token)
 ├── protect-options.ts          # Feature options & config types
 ├── protect-types.ts            # Type definitions & enums
 ├── protect-utils.ts            # Utility functions
 ├── lib/                        # Dependency-free utility library (feature options, MQTT client, HTTPS/WebSocket transports, HomeKit service helpers, UI server)
-│   └── ffmpeg/                 # FFmpeg pipeline (codecs, options, streaming/recording processes, RTP demuxer/ports, fMP4 parsing)
-├── unifi/                      # UniFi Protect API client (login, bootstrap, events WebSocket, livestream) built on src/lib transports
+│   └── ffmpeg/                 # FFmpeg pipeline (codecs, options, hwaccel backends, fMP4/recording/livestream processes, RTP demuxer/ports, fMP4 parsing)
+├── unifi/                      # UniFi Protect API client built on src/lib transports
+│   ├── protect-api.ts          # ProtectApi facade (bootstrap, device commands)
+│   ├── protect-api-session.ts  # Login, cookies, CSRF
+│   ├── protect-api-http.ts     # Request/retry logic, with protect-api-circuit-breaker.ts throttling
+│   ├── protect-api-events-channel.ts  # Realtime events WebSocket
+│   └── protect-api-tls.ts      # TLS trust-on-first-use certificate pinning (pins persisted by protect-tls-pin-store.ts)
 └── devices/
     ├── protect-device.ts       # Base device class
-    ├── protect-camera.ts       # Camera accessory (largest file ~1700 lines)
-    ├── protect-doorbell.ts     # Doorbell + package camera
+    ├── protect-camera.ts       # Camera accessory (composes camera-controls, camera-sensors, camera-video delegates)
+    ├── protect-doorbell.ts     # Doorbell wiring (delegates: protect-doorbell-messages.ts, protect-doorbell-chimes.ts)
+    ├── protect-accessory-context.ts  # Typed accessory.context
     ├── protect-sensor.ts       # Motion/alarm/leak sensors (incl. SuperLink)
     ├── protect-light.ts        # Light/LED control
     ├── protect-chime.ts        # Chime accessory
@@ -80,6 +88,15 @@ homebridge-ui/                  # Custom config UI with discovery & feature opti
 - HKSV timeshift: 10 seconds (dual I-frame)
 - Streaming bitrates: 2000 kbps (local), 1000 kbps (high-latency)
 - HKSV communication timeout: 4.5 seconds
+
+## Conventions
+
+- HomeKit `onSet` handlers that write to Protect use `ProtectDevice.writeDevice()`, which throws `HapStatusError` on failure so HomeKit reverts the UI.
+- Event subscriptions go through `ProtectBase.subscribe()` so `cleanup()` removes them; clear any timers a device owns in its `cleanup()` override.
+- Doorbell/camera state set from `configureDevice()` (called inside the parent constructor) must use `declare` fields - ES2022 class fields would reset them.
+- `src/lib/{featureoptions,mqtt-connection,mqttclient,request,service,ui-server,util,websocket}.ts` must stay byte-identical with homebridge-unifi-access
+  (`scripts/check-lib-sync.sh` runs in CI).
+- `npm run typecheck` type-checks both src and test (tsconfig.test.json); CI runs coverage with thresholds from vitest.config.mts.
 
 ## Code Style
 

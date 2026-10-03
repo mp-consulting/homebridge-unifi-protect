@@ -64,9 +64,9 @@ function decodeClientFrames(buffer: Buffer): { opcode: number; payload: Buffer }
 
   while((offset + 2) <= buffer.length) {
 
-    const opcode = buffer[offset] & 0x0F;
-    const isMasked = !!(buffer[offset + 1] & 0x80);
-    let length = buffer[offset + 1] & 0x7F;
+    const opcode = buffer.readUInt8(offset) & 0x0F;
+    const isMasked = !!(buffer.readUInt8(offset + 1) & 0x80);
+    let length = buffer.readUInt8(offset + 1) & 0x7F;
     let position = offset + 2;
 
     if(length === 126) {
@@ -98,7 +98,7 @@ function decodeClientFrames(buffer: Buffer): { opcode: number; payload: Buffer }
 
       for(let index = 0; index < payload.length; index++) {
 
-        payload[index] ^= mask[index % 4];
+        payload[index] = payload.readUInt8(index) ^ mask.readUInt8(index % 4);
       }
     }
 
@@ -148,8 +148,10 @@ describe('ProtectLivestream', () => {
       res.end();
     });
 
-    server.on('upgrade', (req, socket) => {
+    server.on('upgrade', (req, upgradeSocket) => {
 
+      // Node types the upgraded connection as a Duplex, but for a plain HTTP server it is always a net.Socket.
+      const socket = upgradeSocket as Socket;
       const accept = createHash('sha1').update((req.headers['sec-websocket-key'] ?? '') + WS_GUID).digest('base64');
 
       socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');

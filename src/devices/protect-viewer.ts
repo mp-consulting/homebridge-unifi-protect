@@ -6,12 +6,13 @@
 import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
 import type { DeepPartial, ProtectEventPacket, ProtectViewerConfig } from '../unifi/index.js';
 import type { Nullable } from '../lib/index.js';
+import type { ProtectAccessoryContext } from './protect-accessory-context.js';
 import { ProtectDevice } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';
 
 export class ProtectViewer extends ProtectDevice {
 
-  public ufp: ProtectViewerConfig;
+  public override ufp: ProtectViewerConfig;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, device: ProtectViewerConfig, accessory: PlatformAccessory) {
@@ -28,9 +29,7 @@ export class ProtectViewer extends ProtectDevice {
   private configureDevice(): boolean {
 
     // Clean out the context object in case it's been polluted somehow.
-    this.accessory.context = {};
-    this.accessory.context.mac = this.ufp.mac;
-    this.accessory.context.nvr = this.nvr.ufp.mac;
+    this.accessory.context = { mac: this.ufp.mac, nvr: this.nvr.ufp.mac } satisfies ProtectAccessoryContext;
 
     // Configure accessory information.
     this.configureInfo();
@@ -42,7 +41,7 @@ export class ProtectViewer extends ProtectDevice {
     this.configureMqtt();
 
     // Listen for events.
-    this.nvr.events.on('updateEvent.' + this.ufp.id, this.listeners['updateEvent.' + this.ufp.id] = this.eventHandler.bind(this));
+    this.subscribe('updateEvent.' + this.ufp.id, (packet) => this.eventHandler(packet));
 
     // Inform the user what we're enabling on startup.
     if(enabledLiveviews.length) {
@@ -137,25 +136,8 @@ export class ProtectViewer extends ProtectDevice {
   private async setLiveviewSwitchState(switchService: Service, value: CharacteristicValue): Promise<void> {
 
     const viewState = value === true ? switchService.subtype as string : null;
-    const newDevice = await this.setViewer(viewState);
 
-    if(!newDevice) {
-
-      if(viewState) {
-
-        this.log.error('Unable to set the liveview to: %s.', switchService.displayName);
-
-      } else {
-
-        this.log.error('Unable to clear the liveview.');
-
-      }
-
-      return;
-    }
-
-    // Set the context to our updated device configuration.
-    this.ufp = newDevice;
+    await this.setViewer(viewState, viewState ? 'Unable to set the liveview to: ' + switchService.displayName + '.' : 'Unable to clear the liveview.');
 
     // Update all the other liveview switches.
     this.updateLiveviewSwitchState();
@@ -193,11 +175,11 @@ export class ProtectViewer extends ProtectDevice {
     return true;
   }
 
-  // Set the liveview on a viewer device in UniFi Protect.
-  private async setViewer(newLiveview: Nullable<string>): Promise<Nullable<ProtectViewerConfig>> {
+  // Set the liveview on a viewer device in UniFi Protect. Throws a HAP status error if we're unable to do so.
+  private async setViewer(newLiveview: Nullable<string>, errorMessage: string): Promise<void> {
 
     // Set the liveview.
-    const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, { liveview: newLiveview });
+    await this.writeDevice({ liveview: newLiveview }, '%s', errorMessage);
 
     // Find the liveview name for MQTT.
     const liveview =  this.ufpApi.bootstrap?.liveviews.find(x => x.id === newLiveview);
@@ -207,8 +189,6 @@ export class ProtectViewer extends ProtectDevice {
 
       this.publish('liveview', liveview.name);
     }
-
-    return newDevice;
   }
 
   // Configure MQTT capabilities of this viewer.
@@ -232,16 +212,14 @@ export class ProtectViewer extends ProtectDevice {
         return;
       }
 
-      const newDevice = await this.setViewer(liveview.id);
+      try {
 
-      if(!newDevice) {
-
-        this.log.error('Unable to set liveview via MQTT to %s.', value);
+        await this.setViewer(liveview.id, 'Unable to set liveview via MQTT to ' + value + '.');
+      } catch {
 
         return;
       }
 
-      this.ufp = newDevice;
       this.log.info('Liveview set via MQTT to %s.', liveview.name);
     });
 

@@ -3,20 +3,30 @@
  *
  * protect-snapshot.ts: UniFi Protect HomeKit snapshot class.
  */
-import type { API, HAP, SnapshotRequest } from 'homebridge';
 import { FfmpegExec, type HomebridgePluginLogging, type Nullable, request, runWithTimeout } from './lib/index.js';
+import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_FRESHNESS, PROTECT_SNAPSHOT_CACHE_MAXAGE, PROTECT_SNAPSHOT_FALLBACK_RESERVE,
+  PROTECT_SNAPSHOT_TIMEOUT, PROTECT_SNAPSHOT_URL_MAXSIZE } from './settings.js';
+import type { SnapshotRequest } from 'homebridge';
 import https from 'node:https';
-import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_SNAPSHOT_CACHE_MAXAGE, PROTECT_SNAPSHOT_FALLBACK_RESERVE, PROTECT_SNAPSHOT_TIMEOUT } from './settings.js';
 import type { ProtectCamera } from './devices/index.js';
 import type { ProtectNvr } from './protect-nvr.js';
 import type { ProtectPlatform } from './protect-platform.js';
 
+// A cached snapshot, along with what we need to decide whether it can stand in for a new one: when it was taken, the dimensions it was requested at (if any),
+// and the camera's motion and ring markers at the time so that a subsequent event invalidates it.
+interface CachedSnapshot {
+
+  image: Buffer;
+  lastMotion: Nullable<number>;
+  lastRing: Nullable<number>;
+  request?: { height: number, width: number } | undefined;
+  time: number;
+}
+
 // Camera snapshot class for Protect.
 export class ProtectSnapshot {
 
-  private _cachedSnapshot: Nullable<{ image: Buffer; time: number }>;
-  private readonly api: API;
-  private readonly hap: HAP;
+  private _cachedSnapshot: Nullable<CachedSnapshot>;
   public readonly log: HomebridgePluginLogging;
   private readonly nvr: ProtectNvr;
   private readonly pendingSnapshots: Map<string, Promise<Nullable<Buffer>>>;
@@ -26,8 +36,6 @@ export class ProtectSnapshot {
   // Create an instance of a HomeKit streaming delegate.
   constructor(protectCamera: ProtectCamera) {
 
-    this.api = protectCamera.api;
-    this.hap = protectCamera.api.hap;
     this.log = protectCamera.log;
     this.nvr = protectCamera.nvr;
     this.pendingSnapshots = new Map();
@@ -43,6 +51,15 @@ export class ProtectSnapshot {
     if(!this.protectCamera.ufpApi.bootstrap || this.protectCamera.ufpApi.isThrottled || !this.protectCamera.isOnline) {
 
       return null;
+    }
+
+    // HomeKit routinely asks for the same image from several controllers within moments of each other. If we've just taken a snapshot that satisfies this
+    // request, and nothing has happened on the camera since, serve it rather than spawning FFmpeg all over again.
+    const freshSnapshot = this.freshSnapshot(request);
+
+    if(freshSnapshot) {
+
+      return freshSnapshot;
     }
 
     // See if we have an image cached that we can use, if needed.
@@ -94,7 +111,7 @@ export class ProtectSnapshot {
       if(!snapAttempt) {
 
         // We treat package cameras uniquely.
-        if('packageCamera' in this.protectCamera.accessory.context) {
+        if('packageCamera' in this.protectCamera.context) {
 
           snapAttempt = (await this.snapFromApi(this.sourceBudget(deadline, true), true, request)) ??
             (await this.snapFromRtsp(this.sourceBudget(deadline, false), request));
@@ -124,8 +141,14 @@ export class ProtectSnapshot {
         snapAttempt = cropped ?? snapAttempt;
       }
 
-      // Cache the image before returning it.
-      this._cachedSnapshot = { image: snapAttempt, time: Date.now() };
+      // Cache the image before returning it, noting the event markers we captured it against.
+      this._cachedSnapshot = {
+
+        image: snapAttempt,
+        ...this.eventMarkers,
+        request: request ? { height: request.height, width: request.width } : undefined,
+        time: Date.now(),
+      };
 
       return snapAttempt;
     })();
@@ -181,14 +204,12 @@ export class ProtectSnapshot {
 
     try {
 
-      // Allow self-signed certificates - third-party cameras commonly serve HTTPS with non-public certs.
-      const agent = overrideUrl.startsWith('https://') ?
-        new https.Agent({ rejectUnauthorized: false }) :
-        undefined;
+      // Cap the response size so a misbehaving endpoint can't stream an unbounded body into memory. The transport aborts the download once it exceeds the cap.
+      const { body, headers, statusCode } = await request(overrideUrl, {
 
-      const { statusCode, body } = await request(overrideUrl, {
-
-        agent,
+        // Allow self-signed certificates - third-party cameras commonly serve HTTPS with non-public certs.
+        ...(overrideUrl.startsWith('https://') ? { agent: new https.Agent({ rejectUnauthorized: false }) } : {}),
+        maxResponseSize: PROTECT_SNAPSHOT_URL_MAXSIZE,
         method: 'GET',
         signal: AbortSignal.timeout(PROTECT_SNAPSHOT_TIMEOUT),
       });
@@ -200,7 +221,25 @@ export class ProtectSnapshot {
         return null;
       }
 
-      return Buffer.from(await body.arrayBuffer());
+      const contentLength = Number(headers['content-length']);
+
+      if(Number.isFinite(contentLength) && (contentLength > PROTECT_SNAPSHOT_URL_MAXSIZE)) {
+
+        this.log.warn('Snapshot URL override returned an image that is too large (%s bytes).', contentLength);
+
+        return null;
+      }
+
+      const image = Buffer.from(await body.arrayBuffer());
+
+      if(image.length > PROTECT_SNAPSHOT_URL_MAXSIZE) {
+
+        this.log.warn('Snapshot URL override returned an image that is too large (%s bytes).', image.length);
+
+        return null;
+      }
+
+      return image;
     } catch(error) {
 
       this.log.warn('Snapshot URL override request failed: %s.', error instanceof Error ? error.message : String(error));
@@ -419,6 +458,46 @@ export class ProtectSnapshot {
 
     // Crop succeeded, we're done. Our caller reports the failure case, since it's the one that decides what to do about it.
     return (ffmpegResult?.exitCode === 0) ? ffmpegResult.stdout : null;
+  }
+
+  // Retrieve a recently taken snapshot that can be served in place of a new one. It must be within our freshness window, taken at dimensions that satisfy this
+  // request, and predate no motion or doorbell ring event - a ring or motion event must always produce a new image.
+  private freshSnapshot(request?: SnapshotRequest): Nullable<Buffer> {
+
+    const cached = this._cachedSnapshot;
+
+    if(!cached || ((Date.now() - cached.time) > (PROTECT_SNAPSHOT_CACHE_FRESHNESS * 1000))) {
+
+      return null;
+    }
+
+    const markers = this.eventMarkers;
+
+    if((markers.lastMotion !== cached.lastMotion) || (markers.lastRing !== cached.lastRing)) {
+
+      return null;
+    }
+
+    // An unscaled request only matches an unscaled image. A scaled request is satisfied by an unscaled image or one scaled at least as large, since HomeKit
+    // displays it scaled down either way.
+    if(!request) {
+
+      return cached.request ? null : cached.image;
+    }
+
+    if(cached.request && ((cached.request.width < request.width) || (cached.request.height < request.height))) {
+
+      return null;
+    }
+
+    return cached.image;
+  }
+
+  // The camera's most recent motion and doorbell ring markers, as last reported by the Protect controller. We compare these by value rather than against our
+  // own clock so controller clock skew can't affect whether a cached image is considered stale.
+  private get eventMarkers(): { lastMotion: Nullable<number>, lastRing: Nullable<number> } {
+
+    return { lastMotion: this.protectCamera.ufp.lastMotion ?? null, lastRing: this.protectCamera.ufp.lastRing ?? null };
   }
 
   // Retrieve a cached snapshot, if available.

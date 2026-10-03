@@ -40,9 +40,10 @@ You can configure MQTT settings in the plugin webUI. The settings are:
 |-----------------------|----------------------------------
 | `mqttUrl`             | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`.
 | `mqttTopic`           | The base topic to publish to. The default is: `unifi/protect`.
+| `mqttVerifyTls`       | Validate the broker's TLS certificate when using `mqtts://` or `ssl://`. The default is `true`. Disable it only if your broker uses a self-signed certificate.
 
 > [!IMPORTANT]
-> **mqttUrl** must be a valid URL. Just entering a hostname will result in an error. The URL can use any of these protocols: `mqtt`, `mqtts`, `tcp`, `tls`, `ws`, `wss`.
+> **mqttUrl** must be a valid URL. Just entering a hostname will result in an error. The URL can use any of these protocols: `mqtt`, `mqtts`, `tcp`, `ssl`.
 
 When events are published, by default, the topics look like:
 

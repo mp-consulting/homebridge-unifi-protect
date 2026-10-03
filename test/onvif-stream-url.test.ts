@@ -42,7 +42,7 @@ function buildRelayUrl(ufp: UfpSummary, nvr: NvrSummary, alias: string): string 
 // Mirrors the override branch: a single rtspEntry built from the highest-resolution channel, pointing at the override URL.
 function buildOverrideEntry(ufp: UfpSummary, override: string): { resolution: [number, number, number]; sourceChannel: Channel; url: string } {
 
-  const sourceChannel = [ ...ufp.channels ].sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
+  const sourceChannel = [ ...ufp.channels ].sort((a, b) => (b.width * b.height) - (a.width * a.height))[0]!;
 
   return {
 

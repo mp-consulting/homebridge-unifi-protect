@@ -32,11 +32,15 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Type check (including tests)
+        run: npm run typecheck
+
       - name: Build
         run: npm run build
 
-      - name: Test
-        run: npm test
+      # Coverage thresholds are enforced in vitest.config.mts, so a drop in coverage fails the build.
+      - name: Test with coverage
+        run: npm run test:coverage
 
   # The shared dependency-free library (src/lib) is deliberately duplicated between homebridge-unifi-access and homebridge-unifi-protect. Fail if the copies drift.
   lib-sync:

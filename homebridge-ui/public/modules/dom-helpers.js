@@ -45,6 +45,10 @@ export const escapeHtml = (str) => {
   return div.innerHTML;
 };
 
+// Escape a value for safe interpolation into an HTML attribute (or text) context. Unlike escapeHtml(), this also escapes both quote characters so the value
+// can't break out of a quoted attribute.
+export const escapeAttr = (value) => String(value ?? '').replace(/[&<>"']/g, ch => ({ '"': '&quot;', '&': '&amp;', "'": '&#39;', '<': '&lt;', '>': '&gt;' })[ch]);
+
 // Lightweight DOM element builder: el("div", { className: "foo" }, "text", childEl).
 export const el = (tag, attrs, ...children) => {
 

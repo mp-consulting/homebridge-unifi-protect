@@ -37,46 +37,21 @@
  */
 import type { DeepPartial, Nullable, ProtectCameraChannelConfigInterface, ProtectCameraConfig, ProtectCameraConfigInterface, ProtectChimeConfig,
   ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectSensorConfig, ProtectViewerConfig } from './protect-types.js';
+import { type InternalRetrieveOptions, ProtectApiHttp, type RequestOptions, type RetrieveOptions, isResponseOk } from './protect-api-http.js';
+import { ProtectTlsPin, type ProtectTlsPinOptions, createProtectAgent } from './protect-api-tls.js';
+import { EventEmitter } from 'node:events';
+import { ProtectApiSession } from './protect-api-session.js';
 import type { ProtectEventPacket } from './protect-api-events.js';
+import { ProtectEventsChannel } from './protect-api-events-channel.js';
+import { ProtectLivestream } from './protect-api-livestream.js';
 import type { ProtectLogging } from './protect-logging.js';
 import type { RequestResponse } from '../lib/request.js';
-import { decodePacket } from './protect-api-events.js';
-import { ProtectLivestream } from './protect-api-livestream.js';
-import { request } from '../lib/request.js';
-import { WebSocketClient } from '../lib/websocket.js';
-import { EventEmitter } from 'node:events';
 import { STATUS_CODES } from 'node:http';
-import https from 'node:https';
+import type https from 'node:https';
 import util from 'node:util';
 
-// Number of API errors to accept before we backoff so we don't slam a Protect controller.
-const PROTECT_API_ERROR_LIMIT = 10;
-
-// Interval, in seconds, to wait before trying to access the API again once we've hit the PROTECT_API_ERROR_LIMIT threshold.
-const PROTECT_API_RETRY_INTERVAL = 300;
-
-// Protect API response timeout, in milliseconds. This should never be greater than 5000 ms.
-const PROTECT_API_TIMEOUT = 3500;
-
-// Heartbeat interval, in milliseconds, for the realtime events WebSocket. If no traffic is seen within this interval, the connection is presumed dead and torn
-// down so it can be reestablished.
-const PROTECT_EVENTS_HEARTBEAT_INTERVAL = 30000;
-
-// Delay, in milliseconds, before attempting to reconnect the realtime events WebSocket after it closes. This shrinks the event blackout that would otherwise
-// last until the next periodic bootstrap refresh.
-const PROTECT_EVENTS_RECONNECT_DELAY = 5000;
-
-// Protect controller status codes that indicate transient server-side issues. These should be kept in sync with the transparent retry policy that we hand to
-// request() in _retrieve, which retries on a subset of these codes before _retrieve ever sees them.
-//
-// 400: Bad request.
-// 404: Not found.
-// 429: Too many requests.
-// 500: Internal server error.
-// 502: Bad gateway.
-// 503: Service temporarily unavailable.
-// 504: Gateway timeout.
-const PROTECT_SERVER_ERRORS = new Set([ 400, 404, 429, 500, 502, 503, 504 ]);
+export type { RequestOptions, RetrieveOptions } from './protect-api-http.js';
+export { PROTECT_TLS_PIN_MISMATCH, type ProtectTlsPinOptions, normalizeFingerprint } from './protect-api-tls.js';
 
 /**
  * The Protect device types we know about and are available to us.
@@ -108,41 +83,13 @@ export type ProtectKnownDevicePayloads = DeepPartial<ProtectCameraConfig> | Deep
 export type ProtectNvrBootstrapData = Nullable<ProtectNvrBootstrap>;
 
 /**
- * Configuration options for HTTP requests executed by `retrieve()`.
- *
- * @remarks The caller controls the method and body of the request...we own the transport and identity, so every request uses our authenticated session (cookie,
- * CSRF token) and connection pool.
- */
-export interface RequestOptions {
-
-  body?: string;
-  method?: string;
-}
-
-/**
- * Options to tailor the behavior of {@link ProtectApi.retrieve}.
- *
- * @property {boolean} [logErrors=true] - Log errors. Defaults to `true`.
- * @property {number} [timeout=3500] - Amount of time, in milliseconds, to wait for the Protect controller to respond before timing out. Defaults to `3500`.
- */
-export interface RetrieveOptions {
-
-  logErrors?: boolean;
-  timeout?: number;
-}
-
-// Internal options for our private _retrieve interface, adding the ability to hand response interpretation back to the caller.
-interface InternalRetrieveOptions extends RetrieveOptions {
-
-  decodeResponse?: boolean;
-}
-
-/**
  * Options to tailor the behavior of the Protect API client.
  *
- * @property {boolean} [verifyTls=false] - Validate the controller's TLS certificate. Defaults to `false` since UniFi controllers use self-signed certificates.
+ * @property {boolean} [verifyTls=false] - Validate the controller's TLS certificate against the system's trusted certificate authorities. Defaults to `false`
+ *                                         since UniFi controllers use self-signed certificates. When `false`, the controller's certificate is instead pinned on
+ *                                         first use (see {@link ProtectTlsPinOptions}) and connections presenting a different certificate are refused.
  */
-export interface ProtectApiOptions {
+export interface ProtectApiOptions extends ProtectTlsPinOptions {
 
   verifyTls?: boolean;
 }
@@ -175,6 +122,7 @@ export interface ProtectApiOptions {
  * - Automatic retry with exponential backoff
  * - Throttling after repeated failures
  * - Graceful WebSocket reconnection
+ * - Trust-on-first-use pinning of the controller's TLS certificate when strict validation is disabled
  *
  * ## Error Handling
  *
@@ -194,26 +142,24 @@ export interface ProtectApiOptions {
 export class ProtectApi extends EventEmitter {
 
   private _bootstrap: Nullable<ProtectNvrBootstrap>;
-  private _eventsWs: Nullable<WebSocketClient>;
+  private _isAdminUser: boolean;
+  private _tlsAgent: Nullable<https.Agent>;
   private _verifyTls: boolean;
   private agent: Nullable<https.Agent>;
-  private apiErrorCount: number;
-  private apiThrottleStart: number;
-  private eventsReconnectTimer: Nullable<NodeJS.Timeout>;
-  private headers: Record<string, string>;
-  private _isAdminUser: boolean;
-  private _isThrottled: boolean;
+  private readonly events: ProtectEventsChannel;
+  private readonly http: ProtectApiHttp;
   private log: ProtectLogging;
-  private nvrAddress: string;
-  private password: string;
-  private username: string;
+  private readonly pin: ProtectTlsPin;
+  private readonly session: ProtectApiSession;
 
   /**
    * Create an instance of the UniFi Protect API.
    *
    * @param log     - Custom logging implementation.
    * @param options - Options to tailor the API client's behavior. `verifyTls` enables strict TLS certificate validation of the controller - it defaults to
-   *                  `false` since UniFi controllers ship with self-signed certificates.
+   *                  `false` since UniFi controllers ship with self-signed certificates. When strict validation is off, the controller's certificate is pinned
+   *                  on first use: `pinnedFingerprint` supplies a previously trusted fingerprint, `onFingerprint` is called when a new one is pinned so it
+   *                  can be persisted, and `onFingerprintMismatch` is called when the controller presents a different certificate.
    *
    * @defaultValue Console logging to stdout/stderr
    *
@@ -227,8 +173,8 @@ export class ProtectApi extends EventEmitter {
     // Initialize our parent.
     super();
 
-    // UniFi controllers ship with self-signed certificates, so we skip TLS certificate validation by default. Setups with proper certificates can opt in to
-    // strict validation.
+    // UniFi controllers ship with self-signed certificates, so we skip certificate authority validation by default and pin the certificate on first use
+    // instead. Setups with proper certificates can opt in to strict validation.
     this._verifyTls = options.verifyTls ?? false;
 
     // If we didn't get passed a logging parameter, by default we log to the console.
@@ -241,9 +187,7 @@ export class ProtectApi extends EventEmitter {
     };
 
     this._bootstrap = null;
-    this._eventsWs = null;
     this._isAdminUser = false;
-    this._isThrottled = false;
 
     this.log = {
 
@@ -253,14 +197,45 @@ export class ProtectApi extends EventEmitter {
       warn: (message: string, ...parameters: unknown[]): void => log.warn(this.name + ': ' + message, ...parameters),
     };
 
+    this._tlsAgent = null;
     this.agent = null;
-    this.apiErrorCount = 0;
-    this.apiThrottleStart = 0;
-    this.eventsReconnectTimer = null;
-    this.headers = {};
-    this.nvrAddress = '';
-    this.password = '';
-    this.username = '';
+
+    // When strict validation is off, we pin the controller's certificate on first use and refuse connections that present a different certificate thereafter.
+    this.pin = new ProtectTlsPin(this.log, options);
+
+    // Our authenticated session: credentials, cookie, and CSRF token.
+    this.session = new ProtectApiSession({
+
+      loginEndpoint: () => this.getApiEndpoint('login'),
+      logout: () => this.logout(),
+      retrieve: async (url, requestOptions, retrieveOptions) => this.retrieve(url, requestOptions, retrieveOptions),
+    });
+
+    // Our HTTP transport, including throttling when the controller is struggling.
+    this.http = new ProtectApiHttp({
+
+      agent: () => this.agent,
+      headers: () => this.session.headers,
+      log: this.log,
+      login: async () => this.session.login(),
+      logout: () => this.logout(),
+      nvrAddress: () => this.session.nvrAddress,
+      reset: () => this.reset(),
+    });
+
+    // Our realtime update events channel.
+    this.events = new ProtectEventsChannel({
+
+      cookie: () => this.session.cookie,
+      emitMessage: (packet: ProtectEventPacket) => this.emit('message', packet),
+      isLoggedIn: () => this.session.isLoggedIn,
+      lastUpdateId: () => this._bootstrap?.lastUpdateId ?? '',
+      log: this.log,
+      login: async () => this.session.login(),
+      nvrAddress: () => this.session.nvrAddress,
+      tlsAgent: () => this.tlsAgent,
+      verifyTls: () => this._verifyTls,
+    });
   }
 
   /**
@@ -288,9 +263,7 @@ export class ProtectApi extends EventEmitter {
    */
   public async login(nvrAddress: string, username: string, password: string): Promise<boolean> {
 
-    this.nvrAddress = nvrAddress;
-    this.username = username;
-    this.password = password;
+    this.session.setCredentials(nvrAddress, username, password);
 
     this.logout();
 
@@ -307,80 +280,7 @@ export class ProtectApi extends EventEmitter {
   // Login to the UniFi Protect API.
   private async loginController(): Promise<boolean> {
 
-    // If we're already logged in, we're done.
-    if(this.headers.cookie && this.headers['x-csrf-token']) {
-
-      return true;
-    }
-
-    // Utility to grab the headers we're interested in a normalized manner.
-    const getHeader = (name: string, headers?: RequestResponse['headers']): Nullable<string> => {
-
-      const rawHeader = headers?.[name.toLowerCase()];
-
-      if(!rawHeader) {
-
-        return null;
-      }
-
-      // Normalize it to a string.
-      return Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
-    };
-
-    // Attempt to log in directly. If we already have a CSRF token (from a prior session or a previous login attempt), we skip the CSRF pre-fetch entirely and
-    // go straight to the login endpoint. The login response provides an updated CSRF token, so the pre-fetch is only needed if we have no token at all and the
-    // controller rejects our login without one.
-    const loginBody = JSON.stringify({ password: this.password, rememberMe: true, token: '', username: this.username });
-
-    let response = await this.retrieve(this.getApiEndpoint('login'), { body: loginBody, method: 'POST' });
-
-    // If the login failed and we don't have a CSRF token, acquire one and retry. UniFi OS has cross-site request forgery protection built into its web
-    // management UI. Some controllers require a valid CSRF token on the login request itself.
-    if(!this.responseOk(response?.statusCode) && !this.headers['x-csrf-token']) {
-
-      const csrfResponse = await this.retrieve('https://' + this.nvrAddress, { method: 'GET' }, { logErrors: false });
-
-      if(this.responseOk(csrfResponse?.statusCode)) {
-
-        const csrfToken = getHeader('X-CSRF-Token', csrfResponse?.headers);
-
-        // Preserve the CSRF token, if found, and retry the login.
-        if(csrfToken) {
-
-          this.headers['x-csrf-token'] = csrfToken;
-          response = await this.retrieve(this.getApiEndpoint('login'), { body: loginBody, method: 'POST' });
-        }
-      }
-    }
-
-    // Something went wrong with the login call, possibly a controller reboot or failure.
-    if(!this.responseOk(response?.statusCode)) {
-
-      this.logout();
-
-      return false;
-    }
-
-    // We're logged in. Let's configure our headers.
-    const csrfToken = getHeader('X-Updated-CSRF-Token', response?.headers) ?? getHeader('X-CSRF-Token', response?.headers);
-    const cookie = getHeader('Set-Cookie', response?.headers);
-
-    // Save the refreshed cookie and CSRF token for future API calls and we're done.
-    if(csrfToken && cookie) {
-
-      // Only preserve the token element of the cookie and not the superfluous information that's been added to it.
-      this.headers.cookie = cookie.split(';')[0];
-
-      // Save the CSRF token.
-      this.headers['x-csrf-token'] = csrfToken;
-
-      return true;
-    }
-
-    // Clear out our login credentials.
-    this.logout();
-
-    return false;
+    return this.session.login();
   }
 
   // Attempt to retrieve the bootstrap configuration from the Protect NVR.
@@ -447,140 +347,7 @@ export class ProtectApi extends EventEmitter {
    */
   private async launchEventsWs(): Promise<boolean> {
 
-    // Log us in if needed.
-    if(!(await this.loginController())) {
-
-      return false;
-    }
-
-    // If we already have a listener, we're already all set.
-    if(this._eventsWs) {
-
-      return true;
-    }
-
-    // Launch the realtime events WebSocket. We need to hand it the last update ID we know about in order
-    // to ensure we don't miss any actual updates since we last pulled the bootstrap configuration.
-    const params = new URLSearchParams({ lastUpdateId: this._bootstrap?.lastUpdateId ?? '' });
-
-    try {
-
-      // Let's open the WebSocket connection, passing our authentication cookie. Certificate validation follows our verifyTls setting, which defaults to off
-      // since Protect controllers ship with self-signed certificates. The heartbeat detects connections that die without a FIN or RST - without it, a silently
-      // dead socket would leave us listening forever on a connection that will never deliver another event.
-      const ws = new WebSocketClient('wss://' + this.nvrAddress + '/proxy/protect/ws/updates?' + params.toString(),
-        { headers: { Cookie: this.headers.cookie ?? '' }, heartbeatInterval: PROTECT_EVENTS_HEARTBEAT_INTERVAL, rejectUnauthorized: this._verifyTls });
-
-      // Handle any WebSocket errors. A single once handler covers both the connection phase and the post-connection lifetime...the first error on the WebSocket
-      // triggers logging, closes the connection, and the close event handles cleanup.
-      ws.once('error', (error: Error) => {
-
-        this.log.error('Events API error: %s', error.message);
-        this.log.error(util.inspect(error, { colors: true, depth: null, sorted: true }));
-        ws.close();
-      });
-
-      // Wait for the WebSocket to actually connect before reporting success. This ensures bootstrapController() only signals success when both the HTTP
-      // bootstrap and the realtime events channel are fully established. We use named handlers so that whichever fires first can remove the other, preventing
-      // stale listeners from interfering with post-connection event handling.
-      const connected = await new Promise<boolean>((resolve) => {
-
-        function onOpen(): void {
-
-          ws.off('close', onClose);
-          resolve(true);
-        }
-
-        // If the connection fails, the error handler above will close the WebSocket. We listen for close to detect that the connection was never established.
-        function onClose(): void {
-
-          ws.off('open', onOpen);
-          resolve(false);
-        }
-
-        ws.once('open', onOpen);
-        ws.once('close', onClose);
-      });
-
-      // The WebSocket connection failed to establish.
-      if(!connected) {
-
-        return false;
-      }
-
-      // Make the WebSocket available.
-      this._eventsWs = ws;
-
-      // Cleanup after ourselves if our WebSocket closes for some reason. We guard on identity - a delayed close event from a superseded socket must not null
-      // out a newer live socket, which would otherwise allow duplicate concurrent event connections and doubled events.
-      ws.once('close', () => {
-
-        ws.removeAllListeners();
-
-        if(this._eventsWs !== ws) {
-
-          return;
-        }
-
-        this._eventsWs = null;
-
-        // Schedule a single reconnect attempt if we're still logged in, rather than waiting for the next periodic bootstrap refresh to notice the outage. The
-        // timer guard ensures overlapping close events can't stack reconnect attempts, and reset() cancels any pending attempt.
-        if(this.headers.cookie && this.headers['x-csrf-token'] && !this.eventsReconnectTimer) {
-
-          this.eventsReconnectTimer = setTimeout(() => {
-
-            this.eventsReconnectTimer = null;
-            void this.launchEventsWs();
-          }, PROTECT_EVENTS_RECONNECT_DELAY);
-        }
-      });
-
-      // Emit queue for ordered event delivery. Packet decoding is async (zlib inflate runs on the libuv threadpool), so multiple packets can be inflating
-      // concurrently. We use .then() here deliberately - it's the right primitive for this pattern. Each message handler starts its decode immediately
-      // (parallel inflate), then chains the emit onto the queue so packets are always emitted in arrival order. We can't use async/await for the chaining
-      // because event handlers aren't awaited, and we want decodes to start immediately rather than waiting for prior packets to complete.
-      let emitQueue = Promise.resolve();
-
-      // Chain a decoded packet onto the emit queue. The .then() ensures packets are emitted in arrival order even if later packets finish inflating before
-      // earlier ones. The .catch() prevents a single decode failure from poisoning the queue - without it, a rejected promise would cause all subsequent
-      // .then() calls to also reject.
-      const enqueuePacket = (decoded: Promise<Nullable<ProtectEventPacket>>): void => {
-
-        emitQueue = emitQueue.then(async () => {
-
-          const packet = await decoded;
-
-          if(!packet) {
-
-            this.log.error('Unable to process message from the realtime update events API.');
-            ws.close();
-
-            return;
-          }
-
-          this.emit('message', packet);
-        }).catch((error) => {
-
-          this.log.error('Error processing events WebSocket message: %s.', error);
-          ws.close();
-        });
-      };
-
-      // Process messages as they come in. Our WebSocket client delivers binary frames as Buffers and text frames as strings, so we can normalize and start
-      // decoding immediately. The inflate runs on the libuv threadpool in parallel with any other in-flight decodes.
-      ws.on('message', (data: Buffer | string) => {
-
-        enqueuePacket(decodePacket(this.log, Buffer.isBuffer(data) ? data : Buffer.from(data)));
-      });
-    } catch(error) {
-
-      this.log.error('Error connecting to the realtime update events API: %s.', error);
-
-      return false;
-    }
-
-    return true;
+    return this.events.connect();
   }
 
   /**
@@ -635,15 +402,15 @@ export class ProtectApi extends EventEmitter {
     const oldAdminStatus = this.isAdminUser;
 
     // Determine if the user has administrative camera permissions.
-    this._isAdminUser = user.allPermissions.some(entry => entry.startsWith('camera:') && entry.split(':')[1].split(',').includes('write'));
+    this._isAdminUser = user.allPermissions.some(entry => entry.startsWith('camera:') && (entry.split(':')[1]?.split(',').includes('write') ?? false));
 
     // Only admin users can change certain settings. Inform the user on startup, or if we detect a role change.
     if(isFirstRun && !this.isAdminUser) {
 
-      this.log.info('User \'%s\' requires the Super Admin role in order to change certain settings like camera RTSP stream availability.', this.username);
+      this.log.info('User \'%s\' requires the Super Admin role in order to change certain settings like camera RTSP stream availability.', this.session.username);
     } else if(!isFirstRun && (oldAdminStatus !== this.isAdminUser)) {
 
-      this.log.info('Role change detected for user \'%s\': the Super Admin role has been %s.', this.username, this.isAdminUser ? 'enabled' : 'disabled');
+      this.log.info('Role change detected for user \'%s\': the Super Admin role has been %s.', this.session.username, this.isAdminUser ? 'enabled' : 'disabled');
     }
 
     return true;
@@ -675,7 +442,7 @@ export class ProtectApi extends EventEmitter {
    * @category API Access
    */
   public async getSnapshot(device: ProtectCameraConfig,
-    options: Partial<{ width: number, height: number, timeout: number, usePackageCamera: boolean }> = {}): Promise<Nullable<Buffer>> {
+    options: { width?: number | undefined, height?: number | undefined, timeout?: number, usePackageCamera?: boolean } = {}): Promise<Nullable<Buffer>> {
 
     // Log us in if needed.
     if(!(await this.loginController())) {
@@ -822,7 +589,7 @@ export class ProtectApi extends EventEmitter {
     // Since we took responsibility for interpreting the outcome of the fetch, we need to check for any errors.
     if(!response || !this.responseOk(response.statusCode)) {
 
-      this.apiErrorCount++;
+      this.http.breaker.recordFailure();
 
       if(response?.statusCode === 403) {
 
@@ -838,7 +605,7 @@ export class ProtectApi extends EventEmitter {
     }
 
     // Since we have taken responsibility for decoding response types, we need to reset our API backoff count.
-    this.apiErrorCount = 0;
+    this.http.breaker.recordSuccess();
 
     // Everything worked, save the new channel array.
     try {
@@ -960,29 +727,18 @@ export class ProtectApi extends EventEmitter {
 
     this._bootstrap = null;
 
-    // Detach the events WebSocket before closing it - close can emit synchronously, and the close handler must not see this socket as live or schedule a
-    // reconnect attempt mid-reset.
-    const eventsWs = this._eventsWs;
+    // Close the events WebSocket and cancel any pending reconnect attempt.
+    this.events.close();
 
-    this._eventsWs = null;
-    eventsWs?.close();
-
-    // Cancel any pending events WebSocket reconnect attempt so a reset can't be undone by a stale timer.
-    if(this.eventsReconnectTimer) {
-
-      clearTimeout(this.eventsReconnectTimer);
-      this.eventsReconnectTimer = null;
-    }
-
-    if(this.nvrAddress) {
+    if(this.session.nvrAddress) {
 
       // Cleanup any prior connection pool.
       this.agent?.destroy();
 
-      // Create a connection pool for our HTTP requests. We want to explicitly allow the self-signed SSL certificates that ship with Protect controllers, and
-      // allow up to five connections at a time with keepalive enabled for TLS session reuse and connection efficiency. Robust retry handling for transient
-      // failures is provided per-request by our transport layer in _retrieve.
-      this.agent = new https.Agent({ keepAlive: true, maxSockets: 5, rejectUnauthorized: this._verifyTls });
+      // Create a connection pool for our HTTP requests. Unless strict certificate validation has been requested, we verify the controller's self-signed
+      // certificate against our trust-on-first-use pin before any request data is sent. We allow up to five connections at a time with keepalive enabled for
+      // TLS session reuse and connection efficiency. Robust retry handling for transient failures is provided per-request by our transport layer.
+      this.agent = createProtectAgent(this._verifyTls, this.pin, { keepAlive: true, maxSockets: 5 });
     }
   }
 
@@ -1008,19 +764,8 @@ export class ProtectApi extends EventEmitter {
     // Reset our parameters.
     this._isAdminUser = false;
 
-    // Save our CSRF token, if we have one.
-    const csrfToken = this.headers['x-csrf-token'];
-
-    // Initialize the headers we need.
-    this.headers = {};
-    this.headers['content-type'] = 'application/json';
-    this.headers['user-agent'] = 'unifi-protect';
-
-    // Restore the CSRF token if we have one.
-    if(csrfToken) {
-
-      this.headers['x-csrf-token'] = csrfToken;
-    }
+    // Clear our session, preserving our CSRF token, if we have one.
+    this.session.clear();
   }
 
   // Utility to validate that we have the privileges we need to modify the camera JSON.
@@ -1093,7 +838,7 @@ export class ProtectApi extends EventEmitter {
       // Adjust the URL for our address.
       const responseUrl = new URL(responseJson.url);
 
-      responseUrl.hostname = this.nvrAddress;
+      responseUrl.hostname = this.session.nvrAddress;
 
       // Return the URL to the websocket.
       return responseUrl.toString();
@@ -1141,206 +886,14 @@ export class ProtectApi extends EventEmitter {
   private async _retrieve(url: string, options: RequestOptions = { method: 'GET' },
     retrieveOptions: InternalRetrieveOptions = {}): Promise<Nullable<RequestResponse>> {
 
-    // Set our defaults unless the user has overriden them.
-    retrieveOptions.decodeResponse ??= true;
-    retrieveOptions.logErrors ??= true;
-    retrieveOptions.timeout ??= PROTECT_API_TIMEOUT;
-
-    // Log errors if that's what the caller requested.
-    const logError = (message: string, ...parameters: unknown[]): void => {
-
-      if(!retrieveOptions.logErrors) {
-
-        return;
-      }
-
-      this.log.error(message, ...parameters);
-    };
-
-    let response;
-
-    // Create a signal handler to deliver the abort operation.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), retrieveOptions.timeout);
-
-    // Catch Protect controller server-side issues.
-    try {
-
-      const now = Date.now();
-
-      // Throttle this after PROTECT_API_ERROR_LIMIT attempts.
-      if(this.apiErrorCount >= PROTECT_API_ERROR_LIMIT) {
-
-        // Let the user know we've got an API problem.
-        if(!this._isThrottled) {
-
-          this.apiThrottleStart = now;
-          this._isThrottled = true;
-          this.log.error('Throttling API calls due to errors with the %s previous attempts. Pausing communication with the Protect controller for %s minutes.',
-            this.apiErrorCount++, PROTECT_API_RETRY_INTERVAL / 60);
-          this.reset();
-
-          return null;
-        }
-
-        // Check to see if we are still throttling our API calls.
-        if((now - this.apiThrottleStart) < (PROTECT_API_RETRY_INTERVAL * 1000)) {
-
-          return null;
-        }
-
-        // Inform the user that we're out of the penalty box and try again.
-        this.log.error('Resuming connectivity to the UniFi Protect API after pausing for %s minutes.', PROTECT_API_RETRY_INTERVAL / 60);
-        this.apiErrorCount = 0;
-        this._isThrottled = false;
-
-        if(!(await this.loginController())) {
-
-          return null;
-        }
-      }
-
-      // Execute the API request. We intentionally use our own headers so that every request uses our authenticated session (cookie, CSRF token) and connection
-      // pool. The caller controls the method and body...we own the transport and identity. Transient server-side failures are retried transparently with
-      // exponential backoff. PATCH and POST are deliberately excluded from the retries...the Protect API isn't documented and we don't trust that either is
-      // idempotent on the controller side. A silent retry could leave us with duplicate side effects we can't see. PATCH and POST failures bubble up through
-      // our own error counting instead, so the caller gets to decide what to do about it.
-      response = await request(url, {
-
-        agent: this.agent ?? undefined,
-        body: options.body,
-        headers: this.headers,
-        method: options.method ?? 'GET',
-        retry: ((options.method === 'PATCH') || (options.method === 'POST')) ? undefined :
-          { factor: 2, maxRetries: 5, maxTimeout: 1500, minTimeout: 100, statusCodes: [ 429, 500, 502, 503, 504 ] },
-        signal: controller.signal,
-      });
-
-      // The caller will sort through responses instead of us.
-      if(!retrieveOptions.decodeResponse) {
-
-        return response;
-      }
-
-      // Preemptively increase the error count.
-      this.apiErrorCount++;
-
-      // Bad username and password.
-      if(response.statusCode === 401) {
-
-        this.logout();
-        logError('Invalid login credentials given. Please check your login and password.');
-
-        return null;
-      }
-
-      // Insufficient privileges.
-      if(response.statusCode === 403) {
-
-        logError('Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.');
-
-        return null;
-      }
-
-      if(!this.responseOk(response.statusCode)) {
-
-        if(PROTECT_SERVER_ERRORS.has(response.statusCode)) {
-
-          logError('Unable to connect to the Protect controller. This is temporary and may occur during device reboots.');
-
-          return null;
-        }
-
-        // Some other unknown error occurred.
-        logError('%s - %s', response.statusCode, STATUS_CODES[response.statusCode]);
-
-        return null;
-      }
-
-      // We're all good - return the response and we're done.
-      this.apiErrorCount = 0;
-      this._isThrottled = false;
-
-      return response;
-    } catch(error) {
-
-      // Increment our API error count.
-      this.apiErrorCount++;
-
-      // We aborted the connection.
-      if(controller.signal.aborted || ((error instanceof Error) && (error.name === 'AbortError'))) {
-
-        logError('Protect controller is taking too long to respond to a request. This error can usually be safely ignored.');
-
-        return null;
-      }
-
-      // Map the more common network errors to something more user-friendly.
-      const cause = ((error instanceof Error) && ('code' in error) && (typeof (error as NodeJS.ErrnoException).code === 'string')) ?
-        error as NodeJS.ErrnoException : null;
-
-      if(cause) {
-
-        switch(cause.code) {
-
-          case 'ECONNREFUSED':
-          case 'EHOSTDOWN':
-
-            logError('Connection refused.');
-
-            break;
-
-          case 'ECONNRESET':
-
-            logError('Network connection to Protect controller has been reset.');
-
-            break;
-
-          case 'ENOTFOUND':
-
-            if(this.nvrAddress) {
-
-              logError('Hostname or IP address not found: %s. Please ensure the address you configured for this UniFi Protect controller is correct.',
-                this.nvrAddress);
-            } else {
-
-              logError('No hostname or IP address provided.');
-            }
-
-            break;
-
-          case 'ETIMEDOUT':
-
-            logError('Connection timed out.');
-
-            break;
-
-          default:
-
-            // If we're logging when we have an error, do so.
-            logError('Error: %s | %s.', cause.code, cause.message);
-
-            break;
-        }
-
-        return null;
-      }
-
-      logError('Unknown error: %s', util.inspect(error, { colors: true, depth: null, sorted: true }));
-
-      return null;
-    } finally {
-
-      // Clear out our response timeout.
-      clearTimeout(timer);
-    }
+    return this.http.retrieve(url, options, retrieveOptions);
   }
 
   // Utility function for logging connection retries.
   private logRetry(logMessage: string, isRetry: boolean): void {
 
     // If we're over the API limit, no need to continue indicating errors since we already inform users we're throttling API calls.
-    if(this.apiErrorCount >= PROTECT_API_ERROR_LIMIT) {
+    if(this.http.breaker.isOverLimit) {
 
       return;
     }
@@ -1372,7 +925,7 @@ export class ProtectApi extends EventEmitter {
    */
   public responseOk(code?: number): boolean {
 
-    return (code !== undefined) && (code >= 200) && (code < 300);
+    return isResponseOk(code);
   }
 
   /**
@@ -1440,7 +993,7 @@ export class ProtectApi extends EventEmitter {
 
     const { prefix, suffix } = endpoints[endpoint];
 
-    return 'https://' + this.nvrAddress + prefix + suffix;
+    return 'https://' + this.session.nvrAddress + prefix + suffix;
   }
 
   /**
@@ -1499,7 +1052,7 @@ export class ProtectApi extends EventEmitter {
    */
   public get isThrottled(): boolean {
 
-    return this._isThrottled;
+    return this.http.breaker.isThrottled;
   }
 
   /**
@@ -1515,6 +1068,36 @@ export class ProtectApi extends EventEmitter {
   public get verifyTls(): boolean {
 
     return this._verifyTls;
+  }
+
+  /**
+   * Utility method that returns the SHA-256 fingerprint of the controller certificate we've pinned, if any.
+   *
+   * @returns Returns the colon-separated, uppercase hex fingerprint, or `undefined` if no certificate has been pinned yet or strict validation is enabled.
+   *
+   * @category Utilities
+   */
+  public get tlsFingerprint(): string | undefined {
+
+    return this._verifyTls ? undefined : this.pin.fingerprint;
+  }
+
+  /**
+   * Utility method that returns an HTTPS agent suitable for additional connections to the Protect controller, such as WebSockets.
+   *
+   * @returns Returns an agent that applies the same certificate policy as our API requests - strict validation when `verifyTls` is enabled, and our
+   *   trust-on-first-use certificate pin otherwise. Certificate verification completes before the agent hands the connection to a request, so no request
+   *   data is sent to an unverified controller.
+   *
+   * @remarks The agent doesn't pool connections, making it suitable for long-lived connections like livestreams and talkback.
+   *
+   * @category Utilities
+   */
+  public get tlsAgent(): https.Agent {
+
+    this._tlsAgent ??= createProtectAgent(this._verifyTls, this.pin, { keepAlive: false });
+
+    return this._tlsAgent;
   }
 
   /**
@@ -1535,6 +1118,6 @@ export class ProtectApi extends EventEmitter {
       return (this._bootstrap.nvr.name ?? this._bootstrap.nvr.marketName) + ' [' + this._bootstrap.nvr.marketName + ']';
     }
 
-    return this.nvrAddress;
+    return this.session.nvrAddress;
   }
 }

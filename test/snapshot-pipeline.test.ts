@@ -5,8 +5,8 @@
  * HomeKit gives us a hard five second window to answer a snapshot request. These tests exercise how ProtectSnapshot divides that window between its sources,
  * and how it collapses concurrent requests for the same image into a single attempt.
  */
-import { PROTECT_SNAPSHOT_FALLBACK_RESERVE, PROTECT_SNAPSHOT_TIMEOUT } from '../src/settings.js';
-import { describe, expect, it, vi } from 'vitest';
+import { PROTECT_SNAPSHOT_CACHE_FRESHNESS, PROTECT_SNAPSHOT_FALLBACK_RESERVE, PROTECT_SNAPSHOT_TIMEOUT } from '../src/settings.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProtectCamera } from '../src/devices/index.js';
 import { ProtectSnapshot } from '../src/protect-snapshot.js';
 import type { SnapshotRequest } from 'homebridge';
@@ -31,10 +31,13 @@ function createSnapshot(options: Partial<{ getSnapshot: (device: unknown, opts: 
 
   const ufpApi = { bootstrap: {}, getSnapshot, isThrottled: false };
 
+  const accessory = { context: options.isPackageCamera ? { packageCamera: {} } : {} };
+
   const camera = {
 
-    accessory: { context: options.isPackageCamera ? { packageCamera: {} } : {} },
+    accessory,
     api: { hap: {} },
+    context: accessory.context,
     hints: { crop: false, highResSnapshots: options.highResSnapshots ?? false },
     isOnline: true,
     log,
@@ -51,7 +54,7 @@ function createSnapshot(options: Partial<{ getSnapshot: (device: unknown, opts: 
 // A HomeKit snapshot request at a given size.
 function snapshotRequest(width: number, height: number): SnapshotRequest {
 
-  return { height, width } as SnapshotRequest;
+  return { height, width };
 }
 
 // A promise we can settle from the outside, so a test can hold a snapshot attempt open while it issues more requests.
@@ -63,6 +66,19 @@ function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void } {
   return { promise, resolve };
 }
 
+// Move the clock past the snapshot freshness window, so the next request can't be served straight from the cache.
+function ageCache(): void {
+
+  const now = Date.now() + ((PROTECT_SNAPSHOT_CACHE_FRESHNESS + 1) * 1000);
+
+  vi.spyOn(Date, 'now').mockReturnValue(now);
+}
+
+afterEach(() => {
+
+  vi.restoreAllMocks();
+});
+
 describe('Snapshot source budgeting', () => {
 
   it('gives the controller API the full remaining budget when nothing follows it', async () => {
@@ -73,8 +89,8 @@ describe('Snapshot source budgeting', () => {
     expect(calls).toHaveLength(1);
 
     // The API is the last source in the chain for a regular camera, so it gets everything that's left - no reserve held back behind it.
-    expect(calls[0].timeout).toBeGreaterThan(PROTECT_SNAPSHOT_TIMEOUT - 1000);
-    expect(calls[0].timeout).toBeLessThanOrEqual(PROTECT_SNAPSHOT_TIMEOUT);
+    expect(calls[0]?.timeout).toBeGreaterThan(PROTECT_SNAPSHOT_TIMEOUT - 1000);
+    expect(calls[0]?.timeout).toBeLessThanOrEqual(PROTECT_SNAPSHOT_TIMEOUT);
   });
 
   it('holds back a reserve for the RTSP fallback on package cameras, where the API runs first', async () => {
@@ -83,13 +99,13 @@ describe('Snapshot source budgeting', () => {
 
     await expect(snapshot.getSnapshot()).resolves.toEqual(Buffer.from('controller-snapshot'));
     expect(calls).toHaveLength(1);
-    expect(calls[0].usePackageCamera).toBe(true);
+    expect(calls[0]?.usePackageCamera).toBe(true);
 
     // Package cameras try the API first, so it must leave time for the RTSP attempt queued up behind it.
     const expected = PROTECT_SNAPSHOT_TIMEOUT - PROTECT_SNAPSHOT_FALLBACK_RESERVE;
 
-    expect(calls[0].timeout).toBeGreaterThan(expected - 1000);
-    expect(calls[0].timeout).toBeLessThanOrEqual(expected);
+    expect(calls[0]?.timeout).toBeGreaterThan(expected - 1000);
+    expect(calls[0]?.timeout).toBeLessThanOrEqual(expected);
   });
 
   it('bounds the API call well inside the overall snapshot budget', async () => {
@@ -99,7 +115,7 @@ describe('Snapshot source budgeting', () => {
     await snapshot.getSnapshot();
 
     // The whole point of plumbing a timeout through: the controller call can no longer outlast the deadline we're working against.
-    expect(calls[0].timeout).toBeLessThanOrEqual(PROTECT_SNAPSHOT_TIMEOUT);
+    expect(calls[0]?.timeout).toBeLessThanOrEqual(PROTECT_SNAPSHOT_TIMEOUT);
   });
 
   it('passes the requested dimensions through to the controller', async () => {
@@ -108,8 +124,8 @@ describe('Snapshot source budgeting', () => {
 
     await snapshot.getSnapshot(snapshotRequest(640, 480));
 
-    expect(calls[0].width).toBe(640);
-    expect(calls[0].height).toBe(480);
+    expect(calls[0]?.width).toBe(640);
+    expect(calls[0]?.height).toBe(480);
   });
 });
 
@@ -147,6 +163,7 @@ describe('Snapshot in-flight coalescing', () => {
     const { calls, snapshot } = createSnapshot();
 
     await snapshot.getSnapshot(snapshotRequest(1920, 1080));
+    ageCache();
     await snapshot.getSnapshot(snapshotRequest(1920, 1080));
 
     expect(calls).toHaveLength(2);
@@ -160,6 +177,7 @@ describe('Snapshot in-flight coalescing', () => {
 
     // Prime the cache with a successful request, then fail the next one.
     await expect(snapshot.getSnapshot()).resolves.toEqual(Buffer.from('cached-me'));
+    ageCache();
 
     const results = await Promise.all([ snapshot.getSnapshot(), snapshot.getSnapshot() ]);
 
@@ -173,5 +191,74 @@ describe('Snapshot in-flight coalescing', () => {
 
     await expect(snapshot.getSnapshot()).resolves.toBeNull();
     expect(log.error).toHaveBeenCalledWith('Unable to retrieve a snapshot.');
+  });
+});
+
+describe('Snapshot freshness cache', () => {
+
+  it('serves a just-taken snapshot without generating a new one', async () => {
+
+    const { calls, snapshot } = createSnapshot();
+
+    await snapshot.getSnapshot(snapshotRequest(1920, 1080));
+    await expect(snapshot.getSnapshot(snapshotRequest(1920, 1080))).resolves.toEqual(Buffer.from('controller-snapshot'));
+
+    expect(calls).toHaveLength(1);
+  });
+
+  it('serves a larger cached snapshot to a smaller request, but not the other way around', async () => {
+
+    const { calls, snapshot } = createSnapshot();
+
+    await snapshot.getSnapshot(snapshotRequest(1920, 1080));
+    await snapshot.getSnapshot(snapshotRequest(640, 480));
+    expect(calls).toHaveLength(1);
+
+    await snapshot.getSnapshot(snapshotRequest(3840, 2160));
+    expect(calls).toHaveLength(2);
+  });
+
+  it('only serves an unscaled request from an unscaled image', async () => {
+
+    const { calls, snapshot } = createSnapshot();
+
+    await snapshot.getSnapshot(snapshotRequest(640, 480));
+    await snapshot.getSnapshot();
+    expect(calls).toHaveLength(2);
+
+    // An unscaled image satisfies any scaled request.
+    await snapshot.getSnapshot(snapshotRequest(1920, 1080));
+    expect(calls).toHaveLength(2);
+  });
+
+  it('generates a new snapshot once the freshness window has passed', async () => {
+
+    const { calls, snapshot } = createSnapshot();
+
+    await snapshot.getSnapshot();
+    ageCache();
+    await snapshot.getSnapshot();
+
+    expect(calls).toHaveLength(2);
+  });
+
+  it('never serves a cached image across a motion or doorbell ring event', async () => {
+
+    const { calls, snapshot } = createSnapshot();
+    const ufp = snapshot.protectCamera.ufp as unknown as Record<string, unknown>;
+
+    await snapshot.getSnapshot();
+
+    ufp.lastMotion = 1000;
+    await snapshot.getSnapshot();
+    expect(calls).toHaveLength(2);
+
+    ufp.lastRing = 2000;
+    await snapshot.getSnapshot();
+    expect(calls).toHaveLength(3);
+
+    // With no new events, the image we just took is reused.
+    await snapshot.getSnapshot();
+    expect(calls).toHaveLength(3);
   });
 });

@@ -38,6 +38,27 @@ import util from 'node:util';
 // Matches non-printable control characters for stripping from FFmpeg stderr output. Compiled once at module scope rather than per data event.
 const NON_PRINTABLE_CHARS = /\p{C}+/gu;
 
+// Maximum number of FFmpeg stderr lines we retain for post-mortem diagnostics. FFmpeg can run for days in a livestream or timeshift session, so we only keep
+// the most recent output, which is where the reason for a failure lives.
+const FFMPEG_STDERR_LOG_MAX_LINES = 100;
+
+// Matches the userinfo portion of a URL (scheme://user:password@host) so we can redact the password before logging. Compiled once at module scope.
+const URL_USERINFO_PASSWORD = /\b([a-z][a-z0-9+.-]*:\/\/[^:/?#@\s]*):[^@/?#\s]*@/gi;
+
+/**
+ * Redacts the password from any URL-shaped argument in an FFmpeg command line, e.g. `rtsp://user:secret@host/stream` becomes `rtsp://user:***@host/stream`.
+ *
+ * @param commandLineArgs  - FFmpeg command line arguments.
+ *
+ * @returns The command line joined with spaces, with URL passwords redacted.
+ *
+ * @category FFmpeg
+ */
+export function redactCommandLine(commandLineArgs: string[]): string {
+
+  return commandLineArgs.map(arg => arg.replace(URL_USERINFO_PASSWORD, '$1:***@')).join(' ');
+}
+
 /**
  * Base class providing FFmpeg process management and capability introspection.
  *
@@ -105,11 +126,11 @@ export class FfmpegProcess extends EventEmitter {
   private _isStarted: boolean;
 
   /**
-   * Accumulated log lines from standard error for error reporting and debugging.
+   * The most recent log lines from standard error for error reporting and debugging, bounded to the last FFMPEG_STDERR_LOG_MAX_LINES lines.
    */
   private _stderrLog: string[];
 
-  private ffmpegTimeout?: NodeJS.Timeout;
+  private ffmpegTimeout?: NodeJS.Timeout | undefined;
   private isLogging: boolean;
   private stderrBuffer: string;
 
@@ -173,6 +194,10 @@ export class FfmpegProcess extends EventEmitter {
     this._isStarted = false;
     this._isEnded = false;
 
+    // Start each process lifecycle with fresh diagnostics so a reused instance never reports a previous process's output.
+    this._stderrLog = [];
+    this.stderrBuffer = '';
+
     // If we've got a loglevel specified, ensure we display it.
     if(this.commandLineArgs.includes('-loglevel')) {
 
@@ -183,11 +208,11 @@ export class FfmpegProcess extends EventEmitter {
     if(this.isLogging || this.isVerbose || this.options.debug) {
 
       this.log.info('FFmpeg command (version: %s): %s %s', this.options.codecSupport.ffmpegVersion, this.options.codecSupport.ffmpegExec,
-        this.commandLineArgs.join(' '));
+        redactCommandLine(this.commandLineArgs));
     } else {
 
       this.log.debug('FFmpeg command (version: %s): %s %s', this.options.codecSupport.ffmpegVersion, this.options.codecSupport.ffmpegExec,
-        this.commandLineArgs.join(' '));
+        redactCommandLine(this.commandLineArgs));
     }
 
     return true;
@@ -305,7 +330,7 @@ export class FfmpegProcess extends EventEmitter {
         const line = this.stderrBuffer.slice(0, lineIndex);
 
         this.stderrBuffer = this.stderrBuffer.slice(lineIndex + EOL.length);
-        this._stderrLog.push(line);
+        this.appendStderrLog(line);
 
         // Show it to the user if it's been requested.
         if(this.isLogging || this.isVerbose || this.options.debug) {
@@ -356,7 +381,7 @@ export class FfmpegProcess extends EventEmitter {
         // Flush out any remaining output in our error buffer.
         if(this.stderrBuffer.length) {
 
-          this._stderrLog.push(this.stderrBuffer + '\n');
+          this.appendStderrLog(this.stderrBuffer + '\n');
           this.stderrBuffer = '';
         }
 
@@ -373,6 +398,17 @@ export class FfmpegProcess extends EventEmitter {
       // Cleanup after ourselves. We intentionally preserve _stderrLog so callers can inspect it for post-mortem diagnostics after the process exits.
       this.process = null;
     });
+  }
+
+  // Append a line to our bounded stderr log, discarding the oldest line once we're at capacity.
+  private appendStderrLog(line: string): void {
+
+    this._stderrLog.push(line);
+
+    if(this._stderrLog.length > FFMPEG_STDERR_LOG_MAX_LINES) {
+
+      this._stderrLog.shift();
+    }
   }
 
   // Stop the FFmpeg process and complete any cleanup activities.
@@ -436,7 +472,7 @@ export class FfmpegProcess extends EventEmitter {
     this.log.error('FFmpeg process ended unexpectedly with %s%s%s.', (exitCode !== null) ? 'an exit code of ' + exitCode.toString() : '',
       ((exitCode !== null) && signal) ? ' and ' : '', signal ? 'a signal received of ' + signal : '');
     this.log.error('FFmpeg (%s) command that errored out was: %s %s', this.options.codecSupport.ffmpegVersion, this.options.codecSupport.ffmpegExec,
-      this.commandLineArgs.join(' '));
+      redactCommandLine(this.commandLineArgs));
 
     for(const x of this._stderrLog) {
 
@@ -469,7 +505,7 @@ export class FfmpegProcess extends EventEmitter {
   }
 
   /**
-   * Returns the accumulated standard error log lines from the FFmpeg process.
+   * Returns the most recent standard error log lines from the FFmpeg process, bounded to the last 100 lines of the current (or most recent) process.
    *
    * @returns An array of stderr log lines.
    */

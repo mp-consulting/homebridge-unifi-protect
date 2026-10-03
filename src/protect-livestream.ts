@@ -13,6 +13,7 @@ import type { RtspEntry } from './devices/protect-camera.js';
 export class LivestreamManager {
 
   private eventHandlers: Record<string, () => void>;
+  private generation: Record<string, number>;
   private livestreams: Record<string, FfmpegLivestreamProcess | ProtectLivestream>;
   private protectCamera: ProtectCamera;
   private restartCount: number;
@@ -26,6 +27,7 @@ export class LivestreamManager {
   constructor(protectCamera: ProtectCamera) {
 
     this.eventHandlers = {};
+    this.generation = {};
     this.livestreams = {};
     this.protectCamera = protectCamera;
     this.restartCount = 0;
@@ -52,7 +54,6 @@ export class LivestreamManager {
     const { index } = this.getIndex(rtspEntry);
 
     // Let's see if we have an existing livestream already open and reuse it if we can.
-     
     if(this.livestreams[index]) {
 
       return this.livestreams[index];
@@ -71,10 +72,17 @@ export class LivestreamManager {
     return this.livestreams[index] = this.protectCamera.nvr.ufpApi.createLivestream();
   }
 
+  // Arm, or re-arm, the watchdog that restarts a livestream session that has stopped delivering segments.
+  private armWatchdog(index: string, delay = PROTECT_LIVESTREAM_TIMEOUT, retryRestart = false): void {
+
+    clearTimeout(this.segmentTimer[index]);
+    this.segmentTimer[index] = setTimeout(() => this.livestreams[index]?.emit('restart', retryRestart), delay);
+  }
+
   // Restarting status.
   public isRestarting(rtspEntry: RtspEntry): boolean {
 
-    return this.restarting[this.getIndex(rtspEntry).index];
+    return this.restarting[this.getIndex(rtspEntry).index] ?? false;
   }
 
   // Shutdown all our connections.
@@ -82,12 +90,18 @@ export class LivestreamManager {
 
     // Cleanup all the listeners and shutdown our livestreams.
     Object.values(this.segmentTimer).forEach(timer => clearTimeout(timer));
-     
+
     Object.values(this.livestreams).forEach(livestream => {
 
       livestream.removeAllListeners();
       livestream.stop();
     });
+
+    // Invalidate any restart attempts that are in flight.
+    for(const [ index, generation ] of Object.entries(this.generation)) {
+
+      this.generation[index] = generation + 1;
+    }
 
     this.eventHandlers = {};
     this.livestreams = {};
@@ -105,7 +119,6 @@ export class LivestreamManager {
 
     // If we don't have a livestream configured for this channel, we're done. We could just create it here, but given we listen to events on livestream
     // listeners, this is a safer option to ensure that we've acquired a livestream endpoint before trying to start it.
-     
     if(!this.livestreams[index]) {
 
       return false;
@@ -132,11 +145,14 @@ export class LivestreamManager {
     // Keep track of any issues in the livestream.
     if(!this.subscriberCount[index]) {
 
+      this.generation[index] ??= 0;
       this.restartDelay[index] = PROTECT_LIVESTREAM_RESTART_INTERVAL;
       this.restarting[index] = false;
       this.startTime[index] = Date.now();
 
-      // Configure a restart event for the livestream API session so we can restart the session in case of problems.
+      // Configure a restart event for the livestream API session so we can restart the session in case of problems. The emitter doesn't await listeners, so
+      // the restart runs asynchronously by design.
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
       this.livestreams[index].on('restart', this.eventHandlers[index + '.restart'] = async (retryRestart = false): Promise<void> => {
 
         // If we have a restart inflight and this restart trigger isn't internally triggered, we're done.
@@ -145,21 +161,30 @@ export class LivestreamManager {
           return;
         }
 
+        // Capture the session we're restarting. If the livestream is stopped or shut down while we're waiting, we abandon the restart rather than resurrect a
+        // session nobody is consuming anymore.
+        const generation = this.generation[index];
+        const livestream = this.livestreams[index];
+
+        // The livestream has been shut down out from under us. There's nothing left to restart.
+        if(!livestream) {
+
+          return;
+        }
+
+        const isStale = (): boolean => (this.generation[index] !== generation) || (this.livestreams[index] !== livestream);
+
         this.restarting[index] = true;
 
         // Clear out any existing timer.
-         
-        if(this.segmentTimer[index]) {
+        clearTimeout(this.segmentTimer[index]);
 
-          clearTimeout(this.segmentTimer[index]);
-        }
-
-        this.livestreams[index].stop();
+        livestream.stop();
 
         // If either the controller is offline/throttled or the camera isn't connected, let's retry again in a minute.
         if(!this.protectCamera.ufpApi.bootstrap || this.protectCamera.ufpApi.isThrottled || !this.protectCamera.isOnline) {
 
-          this.segmentTimer[index] = setTimeout(() => this.livestreams[index].emit('restart', true), PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL);
+          this.armWatchdog(index, PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL, true);
 
           return;
         }
@@ -173,9 +198,16 @@ export class LivestreamManager {
           const response = await this.protectCamera.nvr.ufpApi.retrieve(this.protectCamera.nvr.ufpApi.getApiEndpoint(this.protectCamera.ufp.modelKey) + '/' +
             this.protectCamera.ufp.id + '/reboot', { body: JSON.stringify({}), method: 'POST' });
 
+          if(isStale()) {
+
+            return;
+          }
+
+          // We couldn't reboot the camera. Try again later rather than leaving the livestream permanently marked as restarting.
           if(!this.protectCamera.nvr.ufpApi.responseOk(response?.statusCode)) {
 
             this.protectCamera.log.error('Unable to restart the camera.');
+            this.armWatchdog(index, PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL, true);
 
             return;
           }
@@ -184,25 +216,38 @@ export class LivestreamManager {
         this.protectCamera.log.warn('Reconnecting to the %s.', this.protectCamera.hasFeature('Debug.Video.HKSV.UseRtsp') ? 'RTSP stream' : 'livestream API');
 
         // Wait before we try to reconnect to the livestream. This accounts for reboots and other potential connection issues that can occur.
-        await sleep((((Math.random() * 3) + this.restartDelay[index]) * 1000));
+        await sleep((((Math.random() * 3) + (this.restartDelay[index] ?? PROTECT_LIVESTREAM_RESTART_INTERVAL)) * 1000));
+
+        if(isStale()) {
+
+          return;
+        }
 
         if(this.protectCamera.hasFeature('Debug.Video.HKSV.UseRtsp')) {
 
-          (this.livestreams[index] as FfmpegLivestreamProcess).segmentLength = segmentLength;
-          (this.livestreams[index] as FfmpegLivestreamProcess).start();
+          (livestream as FfmpegLivestreamProcess).segmentLength = segmentLength;
+          (livestream as FfmpegLivestreamProcess).start();
         } else {
 
-          await (this.livestreams[index] as ProtectLivestream).start(this.protectCamera.ufp.id, channel,
-            { lens, requestId: this.protectCamera.name + ':' + index, segmentLength });
+          await (livestream as ProtectLivestream).start(this.protectCamera.ufp.id, channel, { lens, requestId: this.protectCamera.name + ':' + index, segmentLength });
+
+          // The session may have been stopped while we were reconnecting. Make sure we don't leave an orphaned connection behind.
+          if(isStale()) {
+
+            livestream.stop();
+
+            return;
+          }
         }
 
         this.startTime[index] = Date.now();
 
         // Check on the state of our livestream API session regularly.
-        this.segmentTimer[index] = setTimeout(() => this.livestreams[index].emit('restart'), PROTECT_LIVESTREAM_TIMEOUT);
+        this.armWatchdog(index);
 
         // Increase our backoff interval in case we've got a stuck livestream websocket on the Protect controller or the camera is offline.
-        this.restartDelay[index] = Math.min(this.restartDelay[index] + (PROTECT_LIVESTREAM_RESTART_INTERVAL / 2), PROTECT_LIVESTREAM_RESTART_INTERVAL * 3);
+        this.restartDelay[index] = Math.min((this.restartDelay[index] ?? PROTECT_LIVESTREAM_RESTART_INTERVAL) + (PROTECT_LIVESTREAM_RESTART_INTERVAL / 2),
+          PROTECT_LIVESTREAM_RESTART_INTERVAL * 3);
 
         // We're done with this restart attempt.
         this.restarting[index] = false;
@@ -211,30 +256,25 @@ export class LivestreamManager {
       // Set a regular heartbeat for the livestream API.
       this.livestreams[index].on('segment', this.eventHandlers[index] = (): void => {
 
-        // Clear out any existing timer.
-         
-        if(this.segmentTimer[index]) {
+        const startTime = this.startTime[index];
 
-          clearTimeout(this.segmentTimer[index]);
+        // Make sure we've got a good livestream before we reset our delay.
+        if((startTime !== undefined) && ((Date.now() - startTime) > PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL)) {
 
-          // Make sure we've got a good livestream before we reset our delay.
-          if((Date.now() - this.startTime[index]) > PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL) {
-
-            this.restartCount = 0;
-            this.restartDelay[index] = PROTECT_LIVESTREAM_RESTART_INTERVAL;
-          }
+          this.restartCount = 0;
+          this.restartDelay[index] = PROTECT_LIVESTREAM_RESTART_INTERVAL;
         }
 
-        // Check on the state of our livestream API session regularly.
-        this.segmentTimer[index] = setTimeout(() => this.livestreams[index].emit('restart'), PROTECT_LIVESTREAM_TIMEOUT);
+        // Push back the watchdog. Segments arrive several times a second, so we re-arm the existing timer rather than allocating a new one each time.
+        this.segmentTimer[index]?.refresh();
       });
 
       // Set an initial timer in case we have an issue with the livestream API at startup.
-      this.segmentTimer[index] = setTimeout(() => this.livestreams[index].emit('restart'), PROTECT_LIVESTREAM_TIMEOUT);
+      this.armWatchdog(index);
     }
 
     // Increment our consumer count.
-    this.subscriberCount[index]++;
+    this.subscriberCount[index] = (this.subscriberCount[index] ?? 0) + 1;
 
     return true;
   }
@@ -245,23 +285,36 @@ export class LivestreamManager {
     const { index } = this.getIndex(rtspEntry);
 
     // If we have open livestreams, we don't want to close the livestream session.
-    if(--this.subscriberCount[index] > 0) {
+    const remainingSubscribers = (this.subscriberCount[index] ?? 0) - 1;
+
+    this.subscriberCount[index] = remainingSubscribers;
+
+    if(remainingSubscribers > 0) {
 
       return;
     }
 
+    // Invalidate any restart attempt that's in flight for this session.
+    this.generation[index] = (this.generation[index] ?? 0) + 1;
+
+    const livestream = this.livestreams[index];
+    const restartHandler = this.eventHandlers[index + '.restart'];
+    const segmentHandler = this.eventHandlers[index];
+
     // End our livestream API connection.
-    this.livestreams[index].stop();
+    livestream?.stop();
 
     // Cleanup our listeners.
-    this.livestreams[index].off('restart', this.eventHandlers[index + '.restart']);
-    this.livestreams[index].off('segment', this.eventHandlers[index]);
+    if(restartHandler) {
 
-     
-    if(this.segmentTimer[index]) {
-
-      clearTimeout(this.segmentTimer[index]);
+      livestream?.off('restart', restartHandler);
     }
+
+    if(segmentHandler) {
+
+      livestream?.off('segment', segmentHandler);
+    }
+    clearTimeout(this.segmentTimer[index]);
 
     this.subscriberCount[index] = 0;
   }

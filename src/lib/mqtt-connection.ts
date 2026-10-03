@@ -83,14 +83,17 @@ function encodeLength(length: number): Buffer {
 export class MqttConnection extends EventEmitter {
 
   private buffer: Buffer;
+  private bytesNeeded: number;
   private connected: boolean;
   private connectTimer: Nullable<NodeJS.Timeout>;
   private ended: boolean;
   private host: string;
   private keepaliveTimer: Nullable<NodeJS.Timeout>;
   private packetId: number;
+  private pending: Buffer[];
+  private pendingLength: number;
   private pendingPings: number;
-  private password?: string;
+  private password?: string | undefined;
   private port: number;
   private queuedPackets: { body: Buffer; type: PacketType }[];
   private reconnectPeriod: number;
@@ -99,7 +102,7 @@ export class MqttConnection extends EventEmitter {
   private socket: Nullable<net.Socket>;
   private subscribedTopics: Set<string>;
   private useTls: boolean;
-  private username?: string;
+  private username?: string | undefined;
 
   // Create a new MQTT connection to a broker URL and initiate the first connection attempt.
   constructor(brokerUrl: string, options: MqttConnectionOptions = {}) {
@@ -133,7 +136,10 @@ export class MqttConnection extends EventEmitter {
     this.password = url.password ? decodeURIComponent(url.password) : undefined;
 
     this.buffer = Buffer.alloc(0);
+    this.bytesNeeded = 0;
     this.connected = false;
+    this.pending = [];
+    this.pendingLength = 0;
     this.connectTimer = null;
     this.ended = false;
     this.keepaliveTimer = null;
@@ -167,6 +173,9 @@ export class MqttConnection extends EventEmitter {
 
     this.socket = socket;
     this.buffer = Buffer.alloc(0);
+    this.bytesNeeded = 0;
+    this.pending = [];
+    this.pendingLength = 0;
 
     // Guard the connection handshake with a timeout covering both the transport connection and the broker's CONNACK. Without it, an endpoint that accepts our
     // TCP connection but never speaks MQTT would leave us hung forever, since the keepalive watchdog is only armed once CONNACK arrives.
@@ -231,12 +240,43 @@ export class MqttConnection extends EventEmitter {
   // Process inbound data from the broker, decoding complete MQTT packets as they arrive.
   private processData(data: Buffer): void {
 
-    this.buffer = Buffer.concat([ this.buffer, data ]);
+    // Queue inbound chunks until the packet we're waiting on is complete. Joining the buffer on every chunk would make reassembling a large packet quadratic in
+    // the number of chunks it arrives in.
+    this.pending.push(data);
+    this.pendingLength += data.length;
+
+    if(this.pendingLength < this.bytesNeeded) {
+
+      return;
+    }
+
+    const [ firstChunk ] = this.pending;
+
+    this.buffer = ((this.pending.length === 1) && firstChunk) ? firstChunk : Buffer.concat(this.pending, this.pendingLength);
+    this.pending = [];
+    this.pendingLength = 0;
+    this.bytesNeeded = 0;
+
+    // Stash whatever we haven't processed yet, noting how much data we need before we can make further progress.
+    const awaitBytes = (count: number): void => {
+
+      this.bytesNeeded = count;
+
+      if(this.buffer.length) {
+
+        this.pending = [ this.buffer ];
+        this.pendingLength = this.buffer.length;
+      }
+
+      this.buffer = Buffer.alloc(0);
+    };
 
     for(;;) {
 
       // We need at least the fixed header byte and one length byte.
       if(this.buffer.length < 2) {
+
+        awaitBytes(2);
 
         return;
       }
@@ -250,10 +290,12 @@ export class MqttConnection extends EventEmitter {
 
         if(offset >= this.buffer.length) {
 
+          awaitBytes(offset + 1);
+
           return;
         }
 
-        const byte = this.buffer[offset++];
+        const byte = this.buffer[offset++] ?? 0;
 
         length += (byte & 0x7F) * multiplier;
         multiplier *= 128;
@@ -284,12 +326,14 @@ export class MqttConnection extends EventEmitter {
       // Wait for the complete packet to arrive.
       if(this.buffer.length < (offset + length)) {
 
+        awaitBytes(offset + length);
+
         return;
       }
 
       const packet = this.buffer.subarray(offset, offset + length);
 
-      this.processPacket(this.buffer[0], packet);
+      this.processPacket(this.buffer[0] ?? 0, packet);
       this.buffer = this.buffer.subarray(offset + length);
     }
   }
@@ -455,11 +499,13 @@ export class MqttConnection extends EventEmitter {
       return;
     }
 
+    // Add up to 20% of jitter so that several clients that lost the same broker don't all reconnect in lockstep. We only ever lengthen the period, so it
+    // remains a lower bound on when we'll retry.
     this.reconnectTimer = setTimeout(() => {
 
       this.reconnectTimer = null;
       this.open();
-    }, this.reconnectPeriod);
+    }, Math.round(this.reconnectPeriod * (1 + (Math.random() * 0.2))));
   }
 
   // Write a complete MQTT packet to the broker.

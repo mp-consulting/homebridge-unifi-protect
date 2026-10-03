@@ -3,11 +3,14 @@
  *
  * index.ts: Protect device classes.
  */
+export * from './protect-accessory-context.js';
 export * from './protect-camera.js';
 export * from './protect-camera-package.js';
 export * from './protect-chime.js';
 export * from './protect-device.js';
 export * from './protect-doorbell.js';
+export * from './protect-doorbell-chimes.js';
+export * from './protect-doorbell-messages.js';
 export * from './protect-light.js';
 export * from './protect-liveviews.js';
 export * from './protect-nvr-systeminfo.js';

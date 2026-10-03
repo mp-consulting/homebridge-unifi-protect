@@ -25,8 +25,13 @@ export interface HomebridgePluginLogging {
   warn: (message: string, ...parameters: unknown[]) => void;
 }
 
-// Validates a name against HomeKit's naming conventions. Compiled once at module scope since this sits on the fast path of sanitizeName().
-const VALID_HOMEKIT_NAME = /^(?!.*\p{Extended_Pictographic})(?!.* {2})(?=^[\p{L}\p{N}].*[\p{L}\p{N}.]$)[\p{L}\p{N}\-"'.,#& ]+$/u;
+// Validates a name against HomeKit's naming conventions, mirroring the rules HAP-NodeJS enforces: a name must start and end with a letter or number, and may
+// contain spaces, apostrophes, and common punctuation in between. We additionally reject runs of spaces. Compiled once at module scope since this sits on the
+// fast path of sanitizeName().
+const VALID_HOMEKIT_NAME = /^(?!.* {2})[\p{L}\p{N}][\p{L}\p{N} ’'&!._:;()/,-]*[\p{L}\p{N}]$/u;
+
+// Characters HomeKit permits within a name, beyond letters and numbers.
+const INVALID_HOMEKIT_NAME_CHARS = /[^\p{L}\p{N}\s’'&!._:;()/,-]/gu;
 
 // A utility method that formats a bitrate value into a human-readable form as bps, kbps, or Mbps.
 export function formatBps(value: number): string {
@@ -120,11 +125,8 @@ export function sanitizeName(name: string): string {
   //   - Replace any disallowed char (including emojis) with a space.
   //   - Collapse multiple spaces to one.
   //   - Trim spaces at the beginning and end of the string.
-  //   - Strip any leading non-letter/number.
-  //   - Collapse two or more trailing periods into one.
-  //   - Remove any other trailing char that's not letter/number/period.
-  return name.replace(/[^\p{L}\p{N}\-"'.,#&\s]/gu, ' ').replace(/\s+/g, ' ').trim().replace(/^[^\p{L}\p{N}]+/u, '').replace(/\.{2,}$/g, '.')
-    .replace(/[^\p{L}\p{N}.]$/u, '');
+  //   - Strip any leading or trailing characters that aren't a letter or number.
+  return name.replace(INVALID_HOMEKIT_NAME_CHARS, ' ').replace(/\s+/g, ' ').trim().replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N}]+$/u, '');
 }
 
 // Validate an accessory name according to HomeKit naming conventions.

@@ -3,6 +3,8 @@
  *
  * protect-utils.ts: Utility functions for UniFi Protect.
  */
+import type { HomebridgePluginLogging } from './lib/index.js';
+import { PROTECT_SEGMENT_QUEUE_MAXLENGTH } from './settings.js';
 import type { Writable } from 'node:stream';
 
 // Convert a string to camel case.
@@ -114,9 +116,13 @@ export function formatRecordingDuration(recordedSeconds: number): { time: string
 }
 
 // Create a segment queue processor for managing backpressure when writing fMP4 segments to FFmpeg. Returns a function that enqueues and processes segments.
-export function createSegmentQueueProcessor(stdinProvider: () => Writable | null | undefined, onSegmentWritten?: () => void): (segment?: Buffer) => void {
+// The queue is bounded: if FFmpeg stops consuming input, we discard the oldest queued segments beyond maxLength rather than growing without limit.
+export function createSegmentQueueProcessor(stdinProvider: () => Writable | null | undefined, onSegmentWritten?: () => void,
+  options: { log?: HomebridgePluginLogging, maxLength?: number } = {}): (segment?: Buffer) => void {
 
+  const maxLength = Math.max(options.maxLength ?? PROTECT_SEGMENT_QUEUE_MAXLENGTH, 1);
   const segmentQueue: Buffer[] = [];
+  let droppedSegments = 0;
   let isWriting = false;
 
   const processSegmentQueue = (segment?: Buffer): void => {
@@ -125,6 +131,19 @@ export function createSegmentQueueProcessor(stdinProvider: () => Writable | null
     if(segment) {
 
       segmentQueue.push(segment);
+
+      // FFmpeg isn't keeping up. Discard the oldest segment so a stalled process can't consume memory without bound. We only log periodically to avoid
+      // flooding the log while a stall persists.
+      if(segmentQueue.length > maxLength) {
+
+        segmentQueue.shift();
+
+        if(!(droppedSegments++ % 100)) {
+
+          options.log?.debug('FFmpeg is not keeping up with the livestream: discarded %s queued segment(s) beyond the %s segment queue limit.',
+            droppedSegments, maxLength);
+        }
+      }
     }
 
     // If we already have a write in progress, or nothing left to write, we're done.

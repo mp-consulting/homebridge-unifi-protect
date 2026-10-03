@@ -93,8 +93,8 @@ export class ProtectCameraSensors {
       return -1;
     };
 
-    // Update the ambient light sensor at regular intervals
-    this.ambientLightTimer = setInterval(async () => {
+    // Poll the ambient light level and update the sensor if it's changed.
+    const pollLux = async (): Promise<void> => {
 
       // Grab the current ambient light level.
       const lux = await getLux();
@@ -110,7 +110,10 @@ export class ProtectCameraSensors {
 
       // Publish the state.
       this.camera.nvr.mqtt?.publish(this.camera.ufp.mac, 'ambientlight', this.ambientLight.toString());
-    }, PROTECT_AMBIENT_LIGHT_POLL_INTERVAL);
+    };
+
+    // Update the ambient light sensor at regular intervals
+    this.ambientLightTimer = setInterval(() => void pollLux(), PROTECT_AMBIENT_LIGHT_POLL_INTERVAL);
 
     // Retrieve the active state when requested.
     service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.camera.isOnline);

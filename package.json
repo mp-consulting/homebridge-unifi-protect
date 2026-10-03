@@ -71,15 +71,16 @@
     "prebuild": "npm run clean",
     "copy:ui-assets": "mkdir -p homebridge-ui/public/lib/fonts && cp node_modules/@mp-consulting/homebridge-ui-kit/dist/kit.css node_modules/@mp-consulting/homebridge-ui-kit/dist/kit.js homebridge-ui/public/lib/ && cp node_modules/bootstrap/dist/css/bootstrap.min.css node_modules/bootstrap/dist/js/bootstrap.bundle.min.js homebridge-ui/public/lib/ && cp node_modules/bootstrap-icons/font/bootstrap-icons.min.css homebridge-ui/public/lib/ && cp node_modules/bootstrap-icons/font/fonts/bootstrap-icons.woff node_modules/bootstrap-icons/font/fonts/bootstrap-icons.woff2 homebridge-ui/public/lib/fonts/ && perl -pi -e 's{^\\s*/[*/]# sourceMappingURL=.*$}{}' homebridge-ui/public/lib/bootstrap.min.css homebridge-ui/public/lib/bootstrap.bundle.min.js",
     "build": "npm run copy:ui-assets && tsc",
-    "clean": "shx rm -rf dist",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "lint": "eslint . --max-warnings=0",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p . && tsc -p tsconfig.test.json",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "watch": "npm run build && npm link && nodemon",
+    "watch": "npm run build && npm link && node --watch-path=./src --watch-path=./homebridge-ui scripts/watch.mjs",
     "start": "npm run build && homebridge -U ./test/hbConfig -D -I -P .",
     "postpublish": "npm run clean",
-    "prepublishOnly": "npm test && npm run lint && npm run build",
+    "prepublishOnly": "npm run typecheck && npm test && npm run lint && npm run build",
     "monitor:events": "npx tsx scripts/event-schema-monitor.ts"
   },
   "main": "dist/index.js",
@@ -94,14 +95,14 @@
     "eslint": "^10.10.0",
     "homebridge": "^2.4.0",
     "homebridge-config-ui-x": "^5.29.0",
-    "nodemon": "^3.1.14",
-    "shx": "0.4.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0",
     "vitest": "^5.0.0"
   },
   "overrides": {
-    "@types/readable-stream": "4.0.23"
+    "@nestjs/platform-fastify": "^12.1.2",
+    "@types/readable-stream": "4.0.23",
+    "fastify": "^5.12.5"
   },
   "optionalDependencies": {
     "ffmpeg-for-homebridge": "2.2.2"

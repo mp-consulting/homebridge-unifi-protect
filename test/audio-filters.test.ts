@@ -1,61 +1,75 @@
 /* Copyright(C) 2019-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
  *
- * audio-filters.test.ts: Tests for the FFmpeg audio filter pipeline builder from protect-camera.ts.
+ * audio-filters.test.ts: Tests for the FFmpeg audio filter pipeline exposed by ProtectCamera.audioFilters.
  *
- * The buildAudioFilterPipeline function constructs a list of FFmpeg audio filter expressions for noise
- * reduction, with optional highpass and lowpass filters. It clamps the fftNr parameter to valid FFmpeg ranges.
+ * The audioFilters getter constructs a list of FFmpeg audio filter expressions for noise reduction, with optional highpass and lowpass filters, driven by
+ * the camera's feature options. It clamps the fftNr parameter to valid FFmpeg ranges.
  */
+import { describe, expect, it } from 'vitest';
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR } from '../src/settings.js';
+import { ProtectCamera } from '../src/devices/protect-camera.js';
 
-// Reproduction of buildAudioFilterPipeline from protect-camera.ts.
-function buildAudioFilterPipeline(fftNr: number, highpass?: number, lowpass?: number): string[] {
+// The feature option values our fake camera reports. A missing value means the option isn't set.
+interface FilterOptions {
 
-  const afOptions: string[] = [];
-
-  // Clamp the noise reduction value to valid FFmpeg ranges.
-  fftNr = Math.max(0.01, Math.min(97, fftNr));
-
-  // Only set the highpass and lowpass filters if explicitly provided.
-  if(typeof highpass === 'number') {
-
-    afOptions.push('highpass=p=2:f=' + highpass.toString());
-  }
-
-  if(typeof lowpass === 'number') {
-
-    afOptions.push('lowpass=p=2:f=' + lowpass.toString());
-  }
-
-  // The afftdn filter options: custom noise profile, noise tracking, and specified noise reduction.
-  afOptions.push("asendcmd=c='1.0 afftdn sn start ; 3.0 afftdn sn stop', afftdn=nt=c:tn=1:nr=" + fftNr.toString());
-
-  return afOptions;
+  enabled?: boolean;
+  fftNr?: number;
+  highpass?: number;
+  lowpass?: number;
 }
 
-describe('buildAudioFilterPipeline', () => {
+// The real audioFilters getter from ProtectCamera.
+const audioFiltersGetter = Object.getOwnPropertyDescriptor(ProtectCamera.prototype, 'audioFilters')?.get as (this: unknown) => string[];
+
+// Evaluate the real ProtectCamera.audioFilters getter against a camera whose feature options are configured as requested.
+function audioFilters(options: FilterOptions): string[] {
+
+  const camera = {
+
+    getFeatureFloat: (option: string): number | null => (option === 'Audio.Filter.Noise.FftNr') ? (options.fftNr ?? null) : null,
+    getFeatureNumber: (option: string): number | null => {
+
+      switch(option) {
+
+        case 'Audio.Filter.Noise.HighPass':
+
+          return options.highpass ?? null;
+
+        case 'Audio.Filter.Noise.LowPass':
+
+          return options.lowpass ?? null;
+
+        default:
+
+          return null;
+      }
+    },
+    hasFeature: (option: string): boolean => (option === 'Audio.Filter.Noise') && (options.enabled ?? true),
+  };
+
+  return audioFiltersGetter.call(camera);
+}
+
+// Shorthand for the afftdn filter expression with a given noise reduction value.
+const afftdn = (nr: string): string => "asendcmd=c='1.0 afftdn sn start ; 3.0 afftdn sn stop', afftdn=nt=c:tn=1:nr=" + nr;
+
+describe('ProtectCamera.audioFilters', () => {
+
+  it('returns no filters when noise filtering is disabled', () => {
+
+    expect(audioFilters({ enabled: false, fftNr: 20, highpass: 150, lowpass: 9000 })).toEqual([]);
+  });
 
   describe('fftNr only (no optional filters)', () => {
 
-    it('returns a single afftdn filter string', () => {
+    it('returns a single afftdn filter with the requested noise reduction and noise profile training commands', () => {
 
-      const result = buildAudioFilterPipeline(14);
-
-      expect(result).toHaveLength(1);
-      expect(result[0]).toContain('afftdn');
+      expect(audioFilters({ fftNr: 14 })).toEqual([ afftdn('14') ]);
     });
 
-    it('includes the specified noise reduction value', () => {
+    it('falls back to the default noise reduction when none is configured', () => {
 
-      const result = buildAudioFilterPipeline(14);
-
-      expect(result[0]).toContain('nr=14');
-    });
-
-    it('includes the noise profile training commands', () => {
-
-      const result = buildAudioFilterPipeline(14);
-
-      expect(result[0]).toContain('afftdn sn start');
-      expect(result[0]).toContain('afftdn sn stop');
+      expect(audioFilters({})).toEqual([ afftdn(PROTECT_FFMPEG_AUDIO_FILTER_FFTNR.toString()) ]);
     });
   });
 
@@ -63,26 +77,12 @@ describe('buildAudioFilterPipeline', () => {
 
     it('prepends highpass filter before afftdn', () => {
 
-      const result = buildAudioFilterPipeline(14, 150);
-
-      expect(result).toHaveLength(2);
-      expect(result[0]).toBe('highpass=p=2:f=150');
-      expect(result[1]).toContain('afftdn');
+      expect(audioFilters({ fftNr: 14, highpass: 150 })).toEqual([ 'highpass=p=2:f=150', afftdn('14') ]);
     });
 
-    it('includes highpass at 0 (typeof 0 is number)', () => {
+    it('includes highpass at 0', () => {
 
-      const result = buildAudioFilterPipeline(14, 0);
-
-      expect(result).toHaveLength(2);
-      expect(result[0]).toBe('highpass=p=2:f=0');
-    });
-
-    it('omits highpass when undefined', () => {
-
-      const result = buildAudioFilterPipeline(14, undefined);
-
-      expect(result).toHaveLength(1);
+      expect(audioFilters({ fftNr: 14, highpass: 0 })).toEqual([ 'highpass=p=2:f=0', afftdn('14') ]);
     });
   });
 
@@ -90,19 +90,12 @@ describe('buildAudioFilterPipeline', () => {
 
     it('prepends lowpass filter before afftdn', () => {
 
-      const result = buildAudioFilterPipeline(14, undefined, 9000);
-
-      expect(result).toHaveLength(2);
-      expect(result[0]).toBe('lowpass=p=2:f=9000');
-      expect(result[1]).toContain('afftdn');
+      expect(audioFilters({ fftNr: 14, lowpass: 9000 })).toEqual([ 'lowpass=p=2:f=9000', afftdn('14') ]);
     });
 
     it('includes lowpass at 0', () => {
 
-      const result = buildAudioFilterPipeline(14, undefined, 0);
-
-      expect(result).toHaveLength(2);
-      expect(result[0]).toBe('lowpass=p=2:f=0');
+      expect(audioFilters({ fftNr: 14, lowpass: 0 })).toEqual([ 'lowpass=p=2:f=0', afftdn('14') ]);
     });
   });
 
@@ -110,57 +103,23 @@ describe('buildAudioFilterPipeline', () => {
 
     it('includes all three filters in order: highpass, lowpass, afftdn', () => {
 
-      const result = buildAudioFilterPipeline(14, 150, 9000);
-
-      expect(result).toHaveLength(3);
-      expect(result[0]).toBe('highpass=p=2:f=150');
-      expect(result[1]).toBe('lowpass=p=2:f=9000');
-      expect(result[2]).toContain('nr=14');
+      expect(audioFilters({ fftNr: 14, highpass: 150, lowpass: 9000 })).toEqual([ 'highpass=p=2:f=150', 'lowpass=p=2:f=9000', afftdn('14') ]);
     });
   });
 
   describe('fftNr clamping', () => {
 
-    it('clamps fftNr below minimum to 0.01', () => {
+    it.each([
 
-      const result = buildAudioFilterPipeline(-10);
+      [ -10, '0.01' ],
+      [ 0, '0.01' ],
+      [ 0.01, '0.01' ],
+      [ 50, '50' ],
+      [ 97, '97' ],
+      [ 200, '97' ],
+    ])('maps fftNr %s to nr=%s', (fftNr, expected) => {
 
-      expect(result[0]).toContain('nr=0.01');
-    });
-
-    it('clamps fftNr of 0 to 0.01', () => {
-
-      const result = buildAudioFilterPipeline(0);
-
-      expect(result[0]).toContain('nr=0.01');
-    });
-
-    it('clamps fftNr above maximum to 97', () => {
-
-      const result = buildAudioFilterPipeline(200);
-
-      expect(result[0]).toContain('nr=97');
-    });
-
-    it('preserves fftNr at lower boundary (0.01)', () => {
-
-      const result = buildAudioFilterPipeline(0.01);
-
-      expect(result[0]).toContain('nr=0.01');
-    });
-
-    it('preserves fftNr at upper boundary (97)', () => {
-
-      const result = buildAudioFilterPipeline(97);
-
-      expect(result[0]).toContain('nr=97');
-    });
-
-    it('preserves valid fftNr within range', () => {
-
-      const result = buildAudioFilterPipeline(50);
-
-      expect(result[0]).toContain('nr=50');
+      expect(audioFilters({ fftNr })).toEqual([ afftdn(expected) ]);
     });
   });
 });

@@ -9,6 +9,25 @@ import util from 'node:util';
 
 const MQTT_DEFAULT_RECONNECT_INTERVAL = 60;
 
+// TLS error codes that indicate we couldn't verify the broker's certificate, as opposed to some other connectivity problem.
+const TLS_VERIFICATION_ERRORS = new Set([ 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'ERR_TLS_CERT_ALTNAME_INVALID', 'SELF_SIGNED_CERT_IN_CHAIN',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ]);
+
+// Options available when creating an MQTT client.
+export interface MqttClientOptions {
+
+  // Validate the broker's TLS certificate for mqtts:// and ssl:// brokers. Defaults to true.
+  verifyTls?: boolean;
+}
+
+// Redact any credentials embedded in a broker URL so that it's safe to log. This deliberately works on the raw string so that it also covers malformed URLs
+// (e.g. a missing scheme), which are precisely the ones we end up logging when something goes wrong.
+export function redactBrokerUrl(brokerUrl: string): string {
+
+  // Everything up to the last '@' is user information. Matching greedily means credentials containing '/' or '@' are still covered in full.
+  return brokerUrl.replace(/^([a-z][a-z0-9+.-]*:\/*)?.*@/i, '$1REDACTED@');
+}
+
 /**
  * MQTT connectivity and topic management class.
  *
@@ -24,9 +43,11 @@ export class MqttClient {
   private mqtt: Nullable<MqttConnection>;
   private subscriptions: Map<string, (message: Buffer) => Promise<void> | void>;
   private topicPrefix: string;
+  private verifyTls: boolean;
 
   // Creates a new MQTT client for connecting to a broker and managing topics with a given prefix.
-  constructor(brokerUrl: string, topicPrefix: string, log: HomebridgePluginLogging, reconnectInterval = MQTT_DEFAULT_RECONNECT_INTERVAL) {
+  constructor(brokerUrl: string, topicPrefix: string, log: HomebridgePluginLogging, reconnectInterval = MQTT_DEFAULT_RECONNECT_INTERVAL,
+    options: MqttClientOptions = {}) {
 
     this.brokerUrl = brokerUrl;
     this.isConnected = false;
@@ -35,6 +56,7 @@ export class MqttClient {
     this.reconnectInterval = reconnectInterval;
     this.subscriptions = new Map();
     this.topicPrefix = topicPrefix;
+    this.verifyTls = options.verifyTls ?? true;
 
     this.configure();
   }
@@ -45,18 +67,18 @@ export class MqttClient {
     // Try to connect to the MQTT broker and make sure we catch any URL errors.
     try {
 
-      this.mqtt = new MqttConnection(this.brokerUrl, { reconnectPeriod: this.reconnectInterval * 1000, rejectUnauthorized: false });
+      this.mqtt = new MqttConnection(this.brokerUrl, { reconnectPeriod: this.reconnectInterval * 1000, rejectUnauthorized: this.verifyTls });
     } catch(error) {
 
       if(error instanceof Error) {
 
         if(error.message === 'Missing protocol') {
 
-          this.log.error('MQTT Broker: Invalid URL provided: %s.', this.brokerUrl);
+          this.log.error('MQTT Broker: Invalid URL provided: %s.', redactBrokerUrl(this.brokerUrl));
         } else if(error.message.startsWith('Unsupported protocol')) {
 
           this.log.error('MQTT Broker: %s. Only mqtt://, mqtts://, tcp://, and ssl:// broker URLs are supported: %s.', error.message.replace(/\.$/, ''),
-            this.brokerUrl);
+            redactBrokerUrl(this.brokerUrl));
         } else {
 
           this.log.error('MQTT Broker: Error: %s.', error.message);
@@ -76,7 +98,7 @@ export class MqttClient {
       this.isConnected = true;
 
       // Inform users, while redacting authentication credentials.
-      this.log.info('MQTT Broker: Connected to %s (topic: %s).', this.brokerUrl.replace(/^(.*:\/\/.*:)(.*)(@.*)$/, '$1REDACTED$3'), this.topicPrefix);
+      this.log.info('MQTT Broker: Connected to %s (topic: %s).', redactBrokerUrl(this.brokerUrl), this.topicPrefix);
     });
 
     // Notify the user when we've disconnected.
@@ -107,6 +129,15 @@ export class MqttClient {
 
         this.log.error('MQTT Broker: %s. Will retry again in %s second%s.', message, this.reconnectInterval, this.reconnectInterval !== 1 ? 's' : '');
       };
+
+      // Certificate verification failures won't resolve themselves by retrying, so give the user something actionable.
+      if(error.code && TLS_VERIFICATION_ERRORS.has(error.code)) {
+
+        logError('Unable to verify the TLS certificate of the broker (' + error.code + '). If your broker uses a self-signed certificate, disable MQTT TLS ' +
+          'certificate verification in the plugin settings');
+
+        return;
+      }
 
       switch(error.code) {
 
@@ -214,6 +245,15 @@ export class MqttClient {
         log.error('MQTT: error setting %s to %s: %s.', type, value, (error instanceof Error ? error.message : String(error)).replace(/\.$/, ''));
       }
     });
+  }
+
+  // Disconnects from the broker and stops any further reconnection attempts.
+  public end(): void {
+
+    this.subscriptions.clear();
+    this.mqtt?.end();
+    this.mqtt = null;
+    this.isConnected = false;
   }
 
   // Unsubscribes from a topic for a specific device, removing its message handler.

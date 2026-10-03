@@ -1,624 +1,284 @@
 /* Copyright(C) 2017-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
  *
- * event-timers.test.ts: Tests for the event timer management patterns used in protect-events.ts.
+ * event-timers.test.ts: Tests for motion, smart detection, occupancy, and doorbell event timers in protect-events.ts.
  *
- * These tests verify the timer key patterns and lifecycle management in isolation, without needing
- * to instantiate the full ProtectEvents class or its Homebridge dependencies.
+ * These tests drive the real ProtectEvents class with a fake NVR and accessories built on the real HAP, using fake timers to verify that HomeKit state is set
+ * when an event arrives, reset once the configured duration elapses, and re-armed (rather than stacked) when events repeat.
  */
+import * as hap from '@homebridge/hap-nodejs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ProtectCamera, ProtectDevice } from '../src/devices/index.js';
+import { EventEmitter } from 'node:events';
+import type { ProtectNvr } from '../src/protect-nvr.js';
+import { ProtectEvents } from '../src/protect-events.js';
+import { ProtectReservedNames } from '../src/protect-types.js';
 
-// Timer key builder helpers that mirror the patterns in protect-events.ts.
-function motionKey(deviceId: string): string {
+const MOTION_DURATION = 10;
+const NOT_OCCUPIED = hap.Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED;
+const OCCUPIED = hap.Characteristic.OccupancyDetected.OCCUPANCY_DETECTED;
+const OCCUPANCY_DURATION = 300;
 
-  return deviceId;
+interface FakeHints {
+
+  logDoorbell: boolean;
+  logMotion: boolean;
+  motionDuration: number;
+  occupancyDuration: number;
+  smartDetect: boolean;
+  smartOccupancy: string[];
 }
 
-function occupancyKey(deviceId: string): string {
+interface Harness {
 
-  return deviceId + '.Motion.OccupancySensor';
+  device: ProtectDevice & ProtectCamera;
+  events: ProtectEvents;
+  published: [string, string][];
 }
 
-function smartDetectKey(deviceId: string, objectType: string): string {
+// Build a fake device with a real HAP accessory carrying the services the event handlers look for.
+function makeDevice(id: string, hints: Partial<FakeHints> = {}, context: Record<string, unknown> = {}): ProtectDevice & ProtectCamera {
 
-  return deviceId + '.Motion.SmartDetect.ObjectSensors.' + objectType;
+  const accessory = new hap.Accessory('Test ' + id, hap.uuid.generate(id));
+
+  accessory.addService(hap.Service.MotionSensor);
+  accessory.addService(hap.Service.OccupancySensor);
+  accessory.addService(hap.Service.Doorbell);
+  accessory.addService(hap.Service.Switch, 'Motion Trigger', ProtectReservedNames.SWITCH_MOTION_TRIGGER);
+  accessory.addService(hap.Service.Switch, 'Doorbell Trigger', ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
+  accessory.addService(hap.Service.ContactSensor, 'Person', ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + '.person');
+  accessory.addService(hap.Service.ContactSensor, 'Vehicle', ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + '.vehicle');
+
+  return {
+
+    accessory,
+    context: { detectMotion: true, doorbellMuted: false, ...context },
+    hints: { logDoorbell: false, logMotion: false, motionDuration: MOTION_DURATION, occupancyDuration: OCCUPANCY_DURATION, smartDetect: false,
+      smartOccupancy: [], ...hints },
+    id,
+    isRinging: false,
+    log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+    ufp: { mac: id.toUpperCase() },
+  } as unknown as ProtectDevice & ProtectCamera;
 }
 
-function licensePlateKey(deviceId: string, plate: string): string {
+// Build a ProtectEvents instance around a fake NVR.
+function makeHarness(hints: Partial<FakeHints> = {}, context: Record<string, unknown> = {}, ringDelay = 0): Harness {
 
-  return smartDetectKey(deviceId, 'vehicle') + '.' + plate;
+  const published: [string, string][] = [];
+  const device = makeDevice('aabbccddeeff', hints, context);
+
+  const nvr = {
+
+    getDeviceById: (id: string): ProtectDevice | null => (id === device.id) ? device : null,
+    hasFeature: (): boolean => false,
+    log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+    mqtt: { publish: (_mac: string, topic: string, message: string): void => void published.push([topic, message]) },
+    platform: { api: { hap }, config: { ringDelay } },
+    ufp: { mac: 'NVRMAC' },
+    ufpApi: new EventEmitter(),
+  } as unknown as ProtectNvr;
+
+  return { device, events: new ProtectEvents(nvr), published };
 }
 
-function doorbellRingKey(deviceId: string): string {
+// Convenience accessors for the HomeKit state we care about.
+const motionDetected = (device: ProtectDevice): unknown => device.accessory.getService(hap.Service.MotionSensor)
+  ?.getCharacteristic(hap.Characteristic.MotionDetected).value;
 
-  return deviceId + '.Doorbell.Ring';
-}
+const occupancyDetected = (device: ProtectDevice): unknown => device.accessory.getService(hap.Service.OccupancySensor)
+  ?.getCharacteristic(hap.Characteristic.OccupancyDetected).value;
 
-function doorbellTriggerKey(deviceId: string): string {
+const smartContact = (device: ProtectDevice, type: string): unknown => device.accessory
+  .getServiceById(hap.Service.ContactSensor, ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + '.' + type)
+  ?.getCharacteristic(hap.Characteristic.ContactSensorState).value;
 
-  return deviceId + '.Doorbell.Ring.Trigger';
-}
+const switchOn = (device: ProtectDevice, subtype: string): unknown => device.accessory.getServiceById(hap.Service.Switch, subtype)
+  ?.getCharacteristic(hap.Characteristic.On).value;
 
-function doorbellMqttKey(deviceId: string): string {
-
-  return deviceId + '.Doorbell.Ring.MQTT';
-}
-
-describe('Event Timer Key Management', () => {
-
-  const DEVICE_A = 'aaaaaaaaaaaa';
-  const DEVICE_B = 'bbbbbbbbbbbb';
-
-  describe('Timer key uniqueness', () => {
-
-    it('should produce distinct keys for all event types on the same device', () => {
-
-      const keys = [
-        motionKey(DEVICE_A),
-        occupancyKey(DEVICE_A),
-        smartDetectKey(DEVICE_A, 'person'),
-        smartDetectKey(DEVICE_A, 'vehicle'),
-        smartDetectKey(DEVICE_A, 'animal'),
-        doorbellRingKey(DEVICE_A),
-        doorbellTriggerKey(DEVICE_A),
-        doorbellMqttKey(DEVICE_A),
-      ];
-
-      const uniqueKeys = new Set(keys);
-
-      expect(uniqueKeys.size).toBe(keys.length);
-    });
-
-    it('should produce distinct keys for the same event type on different devices', () => {
-
-      expect(motionKey(DEVICE_A)).not.toBe(motionKey(DEVICE_B));
-      expect(occupancyKey(DEVICE_A)).not.toBe(occupancyKey(DEVICE_B));
-      expect(smartDetectKey(DEVICE_A, 'person')).not.toBe(smartDetectKey(DEVICE_B, 'person'));
-      expect(doorbellRingKey(DEVICE_A)).not.toBe(doorbellRingKey(DEVICE_B));
-      expect(doorbellTriggerKey(DEVICE_A)).not.toBe(doorbellTriggerKey(DEVICE_B));
-      expect(doorbellMqttKey(DEVICE_A)).not.toBe(doorbellMqttKey(DEVICE_B));
-    });
-
-    it('should produce distinct keys for different smart detection object types', () => {
-
-      const types = ['person', 'vehicle', 'animal', 'face', 'package', 'licensePlate'];
-      const keys = types.map(type => smartDetectKey(DEVICE_A, type));
-      const uniqueKeys = new Set(keys);
-
-      expect(uniqueKeys.size).toBe(types.length);
-    });
-
-    it('should produce distinct keys for different license plates on the same device', () => {
-
-      const plates = ['ABC1234', 'XYZ9876', 'TEST000'];
-      const keys = plates.map(plate => licensePlateKey(DEVICE_A, plate));
-      const uniqueKeys = new Set(keys);
-
-      expect(uniqueKeys.size).toBe(plates.length);
-    });
-
-    it('should not collide between a license plate key and a smart detect key', () => {
-
-      // The license plate key is an extension of the vehicle smart detect key.
-      const vehicleKey = smartDetectKey(DEVICE_A, 'vehicle');
-      const plateKey = licensePlateKey(DEVICE_A, 'ABC1234');
-
-      expect(plateKey).not.toBe(vehicleKey);
-      expect(plateKey.startsWith(vehicleKey)).toBe(true);
-    });
-  });
-
-  describe('Timer key format verification', () => {
-
-    it('should use the bare device ID for motion events', () => {
-
-      expect(motionKey(DEVICE_A)).toBe(DEVICE_A);
-    });
-
-    it('should use the compound key with .Motion.OccupancySensor suffix for occupancy events', () => {
-
-      const key = occupancyKey(DEVICE_A);
-
-      expect(key).toBe(DEVICE_A + '.Motion.OccupancySensor');
-      expect(key).not.toBe(DEVICE_A);
-    });
-
-    it('should include the object type in smart detection keys', () => {
-
-      const key = smartDetectKey(DEVICE_A, 'person');
-
-      expect(key).toBe(DEVICE_A + '.Motion.SmartDetect.ObjectSensors.person');
-      expect(key).toContain('person');
-    });
-
-    it('should use .Doorbell.Ring suffix for doorbell ring debounce', () => {
-
-      expect(doorbellRingKey(DEVICE_A)).toBe(DEVICE_A + '.Doorbell.Ring');
-    });
-
-    it('should use .Doorbell.Ring.Trigger suffix for doorbell trigger switch', () => {
-
-      expect(doorbellTriggerKey(DEVICE_A)).toBe(DEVICE_A + '.Doorbell.Ring.Trigger');
-    });
-
-    it('should use .Doorbell.Ring.MQTT suffix for doorbell MQTT events', () => {
-
-      expect(doorbellMqttKey(DEVICE_A)).toBe(DEVICE_A + '.Doorbell.Ring.MQTT');
-    });
-  });
-});
-
-describe('Event Timer Lifecycle', () => {
-
-  let eventTimers: Map<string, NodeJS.Timeout | undefined>;
-  const DEVICE_ID = 'camera001';
+describe('ProtectEvents timers', () => {
 
   beforeEach(() => {
 
     vi.useFakeTimers();
-    eventTimers = new Map();
   });
 
   afterEach(() => {
 
-    // Clean up any remaining timers.
-    for(const timer of eventTimers.values()) {
-
-      if(timer) {
-
-        clearTimeout(timer);
-      }
-    }
-
-    eventTimers.clear();
     vi.useRealTimers();
   });
 
-  describe('Motion timer set/clear/delete lifecycle', () => {
+  describe('motion', () => {
 
-    it('should register a new motion timer when no timer exists for the device', () => {
+    it('sets motion and the motion trigger, then resets both after the motion duration', () => {
 
-      const key = motionKey(DEVICE_ID);
+      const { device, events, published } = makeHarness();
 
-      expect(eventTimers.has(key)).toBe(false);
+      events.motionEventHandler(device);
 
-      // Simulate: first motion event sets a timer.
-      eventTimers.set(key, setTimeout(() => {
+      expect(motionDetected(device)).toBe(true);
+      expect(switchOn(device, ProtectReservedNames.SWITCH_MOTION_TRIGGER)).toBe(true);
+      expect(published).toContainEqual(['motion', 'true']);
 
-        eventTimers.delete(key);
-      }, 10000));
+      vi.advanceTimersByTime((MOTION_DURATION * 1000) - 1);
+      expect(motionDetected(device)).toBe(true);
 
-      expect(eventTimers.has(key)).toBe(true);
-      expect(eventTimers.get(key)).toBeDefined();
+      vi.advanceTimersByTime(1);
+      expect(motionDetected(device)).toBe(false);
+      expect(switchOn(device, ProtectReservedNames.SWITCH_MOTION_TRIGGER)).toBe(false);
+      expect(published).toContainEqual(['motion', 'false']);
     });
 
-    it('should clear and replace the timer on subsequent motion events', () => {
+    it('re-arms the reset timer on repeated motion instead of stacking timers', () => {
 
-      const key = motionKey(DEVICE_ID);
+      const { device, events, published } = makeHarness();
 
-      // First motion event.
-      eventTimers.set(key, setTimeout(() => {
+      events.motionEventHandler(device);
+      vi.advanceTimersByTime(8000);
+      events.motionEventHandler(device);
 
-        eventTimers.delete(key);
-      }, 10000));
+      // The original timer would have fired here - it must have been replaced.
+      vi.advanceTimersByTime(4000);
+      expect(motionDetected(device)).toBe(true);
 
-      const firstTimer = eventTimers.get(key);
+      vi.advanceTimersByTime(6000);
+      expect(motionDetected(device)).toBe(false);
 
-      // Second motion event: clear existing timer, set new one (as protect-events.ts does).
-      clearTimeout(eventTimers.get(key));
-
-      eventTimers.set(key, setTimeout(() => {
-
-        eventTimers.delete(key);
-      }, 10000));
-
-      const secondTimer = eventTimers.get(key);
-
-      expect(eventTimers.has(key)).toBe(true);
-      expect(secondTimer).not.toBe(firstTimer);
+      // We only announce the start and the end of the motion event once each.
+      expect(published.filter(([topic]) => topic === 'motion')).toEqual([[ 'motion', 'true' ], [ 'motion', 'false' ]]);
     });
 
-    it('should delete the timer entry when the timer fires', () => {
+    it('ignores motion when motion detection is disabled for the device', () => {
 
-      const key = motionKey(DEVICE_ID);
+      const { device, events, published } = makeHarness({}, { detectMotion: false });
+      const timers = vi.getTimerCount();
 
-      eventTimers.set(key, setTimeout(() => {
+      events.motionEventHandler(device);
 
-        eventTimers.delete(key);
-      }, 10000));
-
-      expect(eventTimers.has(key)).toBe(true);
-
-      // Advance time so the timer fires.
-      vi.advanceTimersByTime(10000);
-
-      expect(eventTimers.has(key)).toBe(false);
-    });
-
-    it('should not fire the old timer after it has been cleared and replaced', () => {
-
-      const key = motionKey(DEVICE_ID);
-      const firstCallback = vi.fn();
-      const secondCallback = vi.fn();
-
-      // First motion event.
-      eventTimers.set(key, setTimeout(() => {
-
-        firstCallback();
-        eventTimers.delete(key);
-      }, 10000));
-
-      // Advance partially.
-      vi.advanceTimersByTime(5000);
-
-      // Second motion event: clear and replace.
-      clearTimeout(eventTimers.get(key));
-
-      eventTimers.set(key, setTimeout(() => {
-
-        secondCallback();
-        eventTimers.delete(key);
-      }, 10000));
-
-      // Advance past the original timer's scheduled time.
-      vi.advanceTimersByTime(5000);
-
-      expect(firstCallback).not.toHaveBeenCalled();
-      expect(secondCallback).not.toHaveBeenCalled();
-
-      // Advance to fire the replacement timer.
-      vi.advanceTimersByTime(5000);
-
-      expect(firstCallback).not.toHaveBeenCalled();
-      expect(secondCallback).toHaveBeenCalledTimes(1);
-      expect(eventTimers.has(key)).toBe(false);
+      expect(motionDetected(device)).toBe(false);
+      expect(published).toEqual([]);
+      expect(vi.getTimerCount()).toBe(timers);
     });
   });
 
-  describe('Occupancy timer uses the correct compound key', () => {
+  describe('smart detection', () => {
 
-    it('should store the occupancy timer under the compound key, not the bare device ID', () => {
+    it('uses an independent timer per object type', () => {
 
-      const occupancy = occupancyKey(DEVICE_ID);
-      const motion = motionKey(DEVICE_ID);
+      const { device, events } = makeHarness({ smartDetect: true });
+      const detected = hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED;
 
-      // Simulate occupancy timer creation (as in handleOccupancy).
-      eventTimers.set(occupancy, setTimeout(() => {
-
-        eventTimers.delete(occupancy);
-      }, 300000));
-
-      expect(eventTimers.has(occupancy)).toBe(true);
-      expect(eventTimers.has(motion)).toBe(false);
-    });
-
-    it('should not interfere with the motion timer when checking or clearing the occupancy timer', () => {
-
-      const occupancy = occupancyKey(DEVICE_ID);
-      const motion = motionKey(DEVICE_ID);
-
-      // Simulate both timers active simultaneously.
-      eventTimers.set(motion, setTimeout(() => {
-
-        eventTimers.delete(motion);
-      }, 10000));
-
-      eventTimers.set(occupancy, setTimeout(() => {
-
-        eventTimers.delete(occupancy);
-      }, 300000));
-
-      // Clear only the occupancy timer (as handleOccupancy does before resetting).
-      clearTimeout(eventTimers.get(occupancy));
-
-      eventTimers.set(occupancy, setTimeout(() => {
-
-        eventTimers.delete(occupancy);
-      }, 300000));
-
-      // Motion timer should still be intact.
-      expect(eventTimers.has(motion)).toBe(true);
-      expect(eventTimers.has(occupancy)).toBe(true);
-
-      // Fire the motion timer.
-      vi.advanceTimersByTime(10000);
-
-      expect(eventTimers.has(motion)).toBe(false);
-      expect(eventTimers.has(occupancy)).toBe(true);
-    });
-
-    it('should use the occupancyDuration for the occupancy timer, not motionDuration', () => {
-
-      const occupancy = occupancyKey(DEVICE_ID);
-      const OCCUPANCY_DURATION = 300; // seconds (default from settings.ts)
-
-      eventTimers.set(occupancy, setTimeout(() => {
-
-        eventTimers.delete(occupancy);
-      }, OCCUPANCY_DURATION * 1000));
-
-      // After 10 seconds (motionDuration default), occupancy timer should still be active.
-      vi.advanceTimersByTime(10000);
-      expect(eventTimers.has(occupancy)).toBe(true);
-
-      // After the full occupancy duration, it should be cleared.
-      vi.advanceTimersByTime(290000);
-      expect(eventTimers.has(occupancy)).toBe(false);
-    });
-  });
-
-  describe('Smart detection timers use the correct compound key with object type', () => {
-
-    it('should create separate timer entries for each smart detection type', () => {
-
-      const personKey = smartDetectKey(DEVICE_ID, 'person');
-      const vehicleKey = smartDetectKey(DEVICE_ID, 'vehicle');
-
-      eventTimers.set(personKey, setTimeout(() => {
-
-        eventTimers.delete(personKey);
-      }, 10000));
-
-      eventTimers.set(vehicleKey, setTimeout(() => {
-
-        eventTimers.delete(vehicleKey);
-      }, 10000));
-
-      expect(eventTimers.has(personKey)).toBe(true);
-      expect(eventTimers.has(vehicleKey)).toBe(true);
-      expect(eventTimers.size).toBe(2);
-    });
-
-    it('should include the object type in the key to avoid collisions', () => {
-
-      const personKey = smartDetectKey(DEVICE_ID, 'person');
-
-      expect(personKey).toContain('.person');
-      expect(personKey).not.toContain('.vehicle');
-    });
-
-    it('should clear only the specific smart detection type timer', () => {
-
-      const personKey = smartDetectKey(DEVICE_ID, 'person');
-      const vehicleKey = smartDetectKey(DEVICE_ID, 'vehicle');
-      const animalKey = smartDetectKey(DEVICE_ID, 'animal');
-
-      eventTimers.set(personKey, setTimeout(() => eventTimers.delete(personKey), 10000));
-      eventTimers.set(vehicleKey, setTimeout(() => eventTimers.delete(vehicleKey), 10000));
-      eventTimers.set(animalKey, setTimeout(() => eventTimers.delete(animalKey), 10000));
-
-      // Clear only the vehicle timer (simulating a re-trigger of a vehicle event).
-      clearTimeout(eventTimers.get(vehicleKey));
-      eventTimers.set(vehicleKey, setTimeout(() => eventTimers.delete(vehicleKey), 10000));
-
-      expect(eventTimers.has(personKey)).toBe(true);
-      expect(eventTimers.has(vehicleKey)).toBe(true);
-      expect(eventTimers.has(animalKey)).toBe(true);
-    });
-  });
-
-  describe('Multiple timers for the same device can coexist independently', () => {
-
-    it('should support motion, occupancy, smart detection, and doorbell timers simultaneously', () => {
-
-      const keys = {
-
-        doorbell: doorbellRingKey(DEVICE_ID),
-        doorbellMqtt: doorbellMqttKey(DEVICE_ID),
-        doorbellTrigger: doorbellTriggerKey(DEVICE_ID),
-        motion: motionKey(DEVICE_ID),
-        occupancy: occupancyKey(DEVICE_ID),
-        smartPerson: smartDetectKey(DEVICE_ID, 'person'),
-        smartVehicle: smartDetectKey(DEVICE_ID, 'vehicle'),
-      };
-
-      // Set all timers with different durations.
-      eventTimers.set(keys.motion, setTimeout(() => eventTimers.delete(keys.motion), 10000));
-      eventTimers.set(keys.occupancy, setTimeout(() => eventTimers.delete(keys.occupancy), 300000));
-      eventTimers.set(keys.smartPerson, setTimeout(() => eventTimers.delete(keys.smartPerson), 10000));
-      eventTimers.set(keys.smartVehicle, setTimeout(() => eventTimers.delete(keys.smartVehicle), 10000));
-      eventTimers.set(keys.doorbell, setTimeout(() => eventTimers.delete(keys.doorbell), 5000));
-      eventTimers.set(keys.doorbellTrigger, setTimeout(() => eventTimers.delete(keys.doorbellTrigger), 5000));
-      eventTimers.set(keys.doorbellMqtt, setTimeout(() => eventTimers.delete(keys.doorbellMqtt), 5000));
-
-      expect(eventTimers.size).toBe(7);
-
-      // Verify all keys are present.
-      for(const key of Object.values(keys)) {
-
-        expect(eventTimers.has(key)).toBe(true);
-      }
-    });
-
-    it('should allow doorbell timers to expire independently from motion timers', () => {
-
-      const motionK = motionKey(DEVICE_ID);
-      const doorbellK = doorbellRingKey(DEVICE_ID);
-      const doorbellTriggerK = doorbellTriggerKey(DEVICE_ID);
-      const doorbellMqttK = doorbellMqttKey(DEVICE_ID);
-
-      eventTimers.set(motionK, setTimeout(() => eventTimers.delete(motionK), 10000));
-      eventTimers.set(doorbellK, setTimeout(() => eventTimers.delete(doorbellK), 5000));
-      eventTimers.set(doorbellTriggerK, setTimeout(() => eventTimers.delete(doorbellTriggerK), 5000));
-      eventTimers.set(doorbellMqttK, setTimeout(() => eventTimers.delete(doorbellMqttK), 5000));
-
-      // Doorbell timers expire first (5 seconds).
+      events.motionEventHandler(device, ['person']);
       vi.advanceTimersByTime(5000);
+      events.motionEventHandler(device, ['vehicle']);
 
-      expect(eventTimers.has(doorbellK)).toBe(false);
-      expect(eventTimers.has(doorbellTriggerK)).toBe(false);
-      expect(eventTimers.has(doorbellMqttK)).toBe(false);
-      expect(eventTimers.has(motionK)).toBe(true);
+      expect(smartContact(device, 'person')).toBe(detected);
+      expect(smartContact(device, 'vehicle')).toBe(detected);
 
-      // Motion timer expires at 10 seconds.
+      // The person timer expires first, leaving the vehicle sensor untouched.
       vi.advanceTimersByTime(5000);
+      expect(smartContact(device, 'person')).toBe(hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
+      expect(smartContact(device, 'vehicle')).toBe(detected);
 
-      expect(eventTimers.has(motionK)).toBe(false);
-      expect(eventTimers.size).toBe(0);
+      vi.advanceTimersByTime(5000);
+      expect(smartContact(device, 'vehicle')).toBe(hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
     });
 
-    it('should handle timers for multiple devices without interference', () => {
+    it('does not trigger smart sensors when smart detection is disabled', () => {
 
-      const DEVICE_A = 'camera_front';
-      const DEVICE_B = 'camera_back';
+      const { device, events } = makeHarness({ smartDetect: false });
 
-      const motionA = motionKey(DEVICE_A);
-      const motionB = motionKey(DEVICE_B);
-      const occupancyA = occupancyKey(DEVICE_A);
-      const occupancyB = occupancyKey(DEVICE_B);
+      events.motionEventHandler(device, ['person']);
 
-      eventTimers.set(motionA, setTimeout(() => eventTimers.delete(motionA), 10000));
-      eventTimers.set(motionB, setTimeout(() => eventTimers.delete(motionB), 10000));
-      eventTimers.set(occupancyA, setTimeout(() => eventTimers.delete(occupancyA), 300000));
-      eventTimers.set(occupancyB, setTimeout(() => eventTimers.delete(occupancyB), 300000));
-
-      expect(eventTimers.size).toBe(4);
-
-      // Clear only device A's motion timer.
-      clearTimeout(eventTimers.get(motionA));
-      eventTimers.delete(motionA);
-
-      expect(eventTimers.has(motionA)).toBe(false);
-      expect(eventTimers.has(motionB)).toBe(true);
-      expect(eventTimers.has(occupancyA)).toBe(true);
-      expect(eventTimers.has(occupancyB)).toBe(true);
+      expect(smartContact(device, 'person')).toBe(hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
     });
   });
 
-  describe('Timer cleanup removes the correct entry', () => {
+  describe('occupancy', () => {
 
-    it('should remove only the targeted timer key on delete', () => {
+    it('uses the occupancy duration rather than the motion duration', () => {
 
-      const motion = motionKey(DEVICE_ID);
-      const occupancy = occupancyKey(DEVICE_ID);
-      const smart = smartDetectKey(DEVICE_ID, 'person');
+      const { device, events } = makeHarness();
 
-      eventTimers.set(motion, setTimeout(() => {}, 10000));
-      eventTimers.set(occupancy, setTimeout(() => {}, 300000));
-      eventTimers.set(smart, setTimeout(() => {}, 10000));
+      events.motionEventHandler(device);
 
-      expect(eventTimers.size).toBe(3);
+      vi.advanceTimersByTime(MOTION_DURATION * 1000);
+      expect(motionDetected(device)).toBe(false);
+      expect(occupancyDetected(device)).toBe(OCCUPIED);
 
-      // Delete the motion timer.
-      clearTimeout(eventTimers.get(motion));
-      eventTimers.delete(motion);
-
-      expect(eventTimers.size).toBe(2);
-      expect(eventTimers.has(motion)).toBe(false);
-      expect(eventTimers.has(occupancy)).toBe(true);
-      expect(eventTimers.has(smart)).toBe(true);
+      vi.advanceTimersByTime((OCCUPANCY_DURATION - MOTION_DURATION) * 1000);
+      expect(occupancyDetected(device)).toBe(NOT_OCCUPIED);
     });
 
-    it('should handle clearing a timer that does not exist without error', () => {
+    it('only triggers on configured smart occupancy objects when smart detection is enabled', () => {
 
-      const nonExistentKey = motionKey('nonexistent_device');
+      const { device, events } = makeHarness({ smartDetect: true, smartOccupancy: ['person'] });
 
-      // This mirrors the pattern in protect-events.ts where clearTimeout is called
-      // with eventTimers.get() which returns undefined for missing keys.
-      expect(() => {
+      events.motionEventHandler(device, ['vehicle']);
+      expect(occupancyDetected(device)).toBe(NOT_OCCUPIED);
 
-        clearTimeout(eventTimers.get(nonExistentKey));
-      }).not.toThrow();
-
-      expect(() => {
-
-        eventTimers.delete(nonExistentKey);
-      }).not.toThrow();
+      events.motionEventHandler(device, ['person']);
+      expect(occupancyDetected(device)).toBe(OCCUPIED);
     });
 
-    it('should correctly reflect timer state after full set-clear-delete cycle', () => {
+    it('announces occupancy once while the space remains occupied', () => {
 
-      const key = motionKey(DEVICE_ID);
+      const { device, events, published } = makeHarness();
 
-      // Set.
-      eventTimers.set(key, setTimeout(() => eventTimers.delete(key), 10000));
-      expect(eventTimers.has(key)).toBe(true);
+      events.motionEventHandler(device);
+      vi.advanceTimersByTime(60 * 1000);
+      events.motionEventHandler(device);
 
-      // Clear the timeout.
-      clearTimeout(eventTimers.get(key));
+      expect(published.filter(entry => entry[0] === 'occupancy')).toEqual([[ 'occupancy', 'true' ]]);
+    });
+  });
 
-      // The key is still in the map (clearTimeout does not remove it from the map).
-      expect(eventTimers.has(key)).toBe(true);
+  describe('doorbell', () => {
 
-      // Delete removes it.
-      eventTimers.delete(key);
-      expect(eventTimers.has(key)).toBe(false);
+    it('turns the doorbell trigger on while ringing and publishes the ring', () => {
+
+      const { device, events, published } = makeHarness();
+
+      events.doorbellEventHandler(device, Date.now());
+
+      expect(device.isRinging).toBe(true);
+      expect(switchOn(device, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER)).toBe(true);
+      expect(published).toContainEqual(['doorbell', 'true']);
     });
 
-    it('should support the doorbell clear-delete-set pattern used for trigger resets', () => {
+    it('debounces rings while the ring delay is active', () => {
 
-      const triggerKey = doorbellTriggerKey(DEVICE_ID);
+      const { device, events, published } = makeHarness({}, {}, 5);
 
-      // First doorbell ring: set the trigger timer.
-      eventTimers.set(triggerKey, setTimeout(() => {
+      events.doorbellEventHandler(device, Date.now());
+      events.doorbellEventHandler(device, Date.now());
 
-        eventTimers.delete(triggerKey);
-      }, 5000));
+      expect(published.filter(entry => entry[0] === 'doorbell' && entry[1] === 'true')).toHaveLength(1);
 
-      expect(eventTimers.has(triggerKey)).toBe(true);
+      // Once the ring delay has passed, a new ring is accepted again.
+      vi.advanceTimersByTime(5000);
+      events.doorbellEventHandler(device, Date.now());
 
-      // Second doorbell ring within the trigger duration: clear, delete, then set a new timer.
-      // This is the exact pattern from doorbellEventHandler.
-      if(eventTimers.has(triggerKey)) {
+      expect(published.filter(entry => entry[0] === 'doorbell' && entry[1] === 'true')).toHaveLength(2);
+    });
+  });
 
-        clearTimeout(eventTimers.get(triggerKey));
-        eventTimers.delete(triggerKey);
+  describe('state tracking', () => {
+
+    it('does not retain state for event packets, only for devices', () => {
+
+      const { events } = makeHarness();
+      const emit = (modelKey: string, id: string): boolean => events.emit('updateEvent', { header: { action: 'update', id, modelKey }, payload: {} });
+
+      for(let i = 0; i < 100; i++) {
+
+        emit('event', 'event' + i.toString());
       }
 
-      expect(eventTimers.has(triggerKey)).toBe(false);
+      emit('camera', 'newcamera');
 
-      eventTimers.set(triggerKey, setTimeout(() => {
+      const state = (events as unknown as { ufpDeviceState: Record<string, unknown> }).ufpDeviceState;
 
-        eventTimers.delete(triggerKey);
-      }, 5000));
-
-      expect(eventTimers.has(triggerKey)).toBe(true);
-
-      // Let the timer expire.
-      vi.advanceTimersByTime(5000);
-
-      expect(eventTimers.has(triggerKey)).toBe(false);
-    });
-  });
-
-  describe('Doorbell ring debounce pattern', () => {
-
-    it('should block subsequent rings while the debounce timer is active', () => {
-
-      const ringKey = doorbellRingKey(DEVICE_ID);
-      const ringCount = { value: 0 };
-
-      // Simulate the doorbell ring debounce pattern from doorbellEventHandler.
-      const simulateRing = (): boolean => {
-
-        // If we have an inflight ring event, we're done (return early, ring blocked).
-        if(eventTimers.has(ringKey)) {
-
-          return false;
-        }
-
-        ringCount.value++;
-
-        // Set the debounce timer.
-        eventTimers.set(ringKey, setTimeout(() => {
-
-          eventTimers.delete(ringKey);
-        }, 3000)); // ringDelay * 1000
-
-        return true;
-      };
-
-      // First ring goes through.
-      expect(simulateRing()).toBe(true);
-      expect(ringCount.value).toBe(1);
-
-      // Second ring is blocked.
-      expect(simulateRing()).toBe(false);
-      expect(ringCount.value).toBe(1);
-
-      // After debounce expires, next ring goes through.
-      vi.advanceTimersByTime(3000);
-
-      expect(simulateRing()).toBe(true);
-      expect(ringCount.value).toBe(2);
+      expect(Object.keys(state)).toEqual(['newcamera']);
     });
   });
 });

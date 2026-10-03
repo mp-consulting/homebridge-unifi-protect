@@ -10,6 +10,7 @@
 import type { API, CameraRecordingConfiguration, CameraRecordingDelegate, HAP, PlatformAccessory, RecordingPacket } from 'homebridge';
 import { FfmpegRecordingProcess, type HomebridgePluginLogging, type Nullable, formatBps } from './lib/index.js';
 import type { ProtectCamera, RtspEntry } from './devices/index.js';
+import { accessoryContext } from './devices/protect-accessory-context.js';
 import { HDSProtocolSpecificErrorReason } from 'homebridge';
 import { PROTECT_HKSV_TIMESHIFT_BUFFER_MAXDURATION } from './settings.js';
 import { ProtectTimeshiftBuffer } from './protect-timeshift.js';
@@ -22,16 +23,16 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   private readonly accessory: PlatformAccessory;
   private readonly api: API;
   private readonly hap: HAP;
-  private ffmpegStream?: FfmpegRecordingProcess;
+  private ffmpegStream?: FfmpegRecordingProcess | undefined;
   private isInitialized: boolean;
   private isTransmitting: boolean;
   private readonly log: HomebridgePluginLogging;
   private readonly protectCamera: ProtectCamera;
-  private recordingConfig?: CameraRecordingConfiguration;
+  private recordingConfig?: CameraRecordingConfiguration | undefined;
   public rtspEntry: Nullable<RtspEntry>;
   public readonly timeshift: ProtectTimeshiftBuffer;
   private timeshiftedSegments: number;
-  private transmitListener?: ((segment: Buffer) => void);
+  private transmitListener?: ((segment: Buffer) => void) | undefined;
   private transmittedSegments: number;
 
   // Create an instance of the HKSV recording delegate.
@@ -51,7 +52,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.timeshift = new ProtectTimeshiftBuffer(protectCamera);
   }
 
-  // Process HomeKit requests to activate or deactivate HKSV recording capabilities for a camera.
+  // Process HomeKit requests to activate or deactivate HKSV recording capabilities for a camera. HAP declares this as returning void and invokes it without
+  // awaiting. We remain async so our own callers can await completion.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
   public async updateRecordingActive(active: boolean): Promise<void> {
 
     // If we are no longer recording, stop the livestream.
@@ -131,14 +134,14 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.transmittedSegments = 0;
 
     // If we are recording HKSV events and we haven't fully initialized our timeshift buffer (e.g. offline cameras preventing us from doing so), then do so now.
-    if(!this.accessory.context.hksvRecordingDisabled && this.isRecording && !this.isInitialized) {
+    if(!accessoryContext(this.accessory).hksvRecordingDisabled && this.isRecording && !this.isInitialized) {
 
       await this.updateRecordingActive(this.isRecording);
     }
 
     // If we've explicitly disabled HKSV recording, or we have issues setting up our timeshift buffer, we're done right now. Otherwise, start transmitting
     // our timeshift buffer and process it through FFmpeg.
-    if(this.accessory.context.hksvRecordingDisabled || !this.isInitialized || this.timeshift.isRestarting || !this.protectCamera.isOnline ||
+    if(accessoryContext(this.accessory).hksvRecordingDisabled || !this.isInitialized || this.timeshift.isRestarting || !this.protectCamera.isOnline ||
       (this.timeshift.time < (this.recordingConfig?.prebufferLength ?? -1)) || !(await this.startTransmitting()) || !this.ffmpegStream) {
 
       // Stop transmitting.
@@ -309,7 +312,8 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.isTransmitting = true;
 
     // We maintain a queue to manage segment writes to FFmpeg. Why? We need to be prepared for backpressure when writing to FFmpeg.
-    const processSegmentQueue = createSegmentQueueProcessor(() => this.ffmpegStream?.stdin ?? null, () => this.timeshiftedSegments++);
+    const processSegmentQueue = createSegmentQueueProcessor(() => this.ffmpegStream?.stdin ?? null, () => this.timeshiftedSegments++,
+      { log: this.log });
 
     // Listen in for events from the timeshift buffer and feed FFmpeg. This looks simple, conceptually, but there's a lot going on here.
     this.timeshift.on('segment', this.transmitListener = (segment: Buffer): void => {
@@ -396,7 +400,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.transmittedSegments = Math.max(--this.transmittedSegments, 0);
 
     // Inform the user if we've recorded something.
-    if(!this.accessory.context.hksvRecordingDisabled && this.timeshiftedSegments && this.transmittedSegments && this.rtspEntry) {
+    if(!accessoryContext(this.accessory).hksvRecordingDisabled && this.timeshiftedSegments && this.transmittedSegments && this.rtspEntry) {
 
       // Calculate approximately how many seconds we've recorded. We have more accuracy in timeshifted segments, so we'll use the more accurate statistics when
       // we can. Otherwise, we use the number of segments transmitted to HomeKit as a close proxy.

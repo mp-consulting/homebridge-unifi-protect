@@ -32,10 +32,13 @@ export type ProtectOptions = {
 export interface ProtectCameraOverride {
 
   mac: string;
+
+  // UI-only: written and read back by the webUI's ONVIF discovery panel. Never consumed by the plugin runtime.
   onvifPassword?: string;
   onvifPort?: number;
   onvifServicePath?: string;
   onvifUsername?: string;
+
   rtspUrl?: string;
   snapshotUrl?: string;
 }
@@ -52,10 +55,13 @@ export interface ProtectNvrOptions {
   }[];
   mqttTopic: string;
   mqttUrl?: string;
+  mqttVerifyTls?: boolean;
   name?: string;
   overrideAddress?: string;
-  username: string;
   password: string;
+  playlistAddress?: string;
+  playlistToken?: string;
+  username: string;
   verifyTls?: boolean;
 }
 
@@ -120,7 +126,14 @@ export const featureOptionCategories = [
   { description: 'HomeKit Secure Video', isNotProperty: ['isThirdPartyCamera'], modelKey: ['camera'], name: 'Video.HKSV' },
 ];
 
-export const featureOptions: Record<string, ProtectFeatureOption[]> = {
+// Identity helper that lets us retain the literal option names in our catalog for type derivation, while keeping the catalog itself in the mutable shape our
+// feature option library expects. The const type parameter preserves literals without making the arrays readonly.
+function defineFeatureOptions<const T extends Record<string, ProtectFeatureOption[]>>(options: T): T {
+
+  return options;
+}
+
+const featureOptionCatalog = defineFeatureOptions({
 
   // Audio options.
   'Audio': [
@@ -255,5 +268,19 @@ export const featureOptions: Record<string, ProtectFeatureOption[]> = {
     { default: false, description: 'When recording HomeKit Secure Video events, force the use of the medium quality video stream from the Protect controller.', name: 'Record.Only.Medium' },
     { default: false, description: 'When recording HomeKit Secure Video events, force the use of the low quality video stream from the Protect controller.', name: 'Record.Only.Low' },
   ],
-};
+});
+
+// The feature option catalog, typed broadly for consumers that iterate over it.
+export const featureOptions: Record<string, ProtectFeatureOption[]> = featureOptionCatalog;
+
+// Expand a category and option name into the fully qualified option key, mirroring FeatureOptions.expandOption(): an empty option name refers to the category
+// itself.
+type ExpandFeatureOption<Category extends string, Option extends string> = Option extends '' ? Category : `${Category}.${Option}`;
+
+type FeatureOptionCatalog = typeof featureOptionCatalog;
+
+// Every fully qualified feature option key in our catalog (e.g. 'Video.HKSV.Recording.Switch'). Debug options are intentionally undocumented and aren't part of
+// the catalog, so we allow them through an explicit escape hatch.
+export type ProtectFeatureOptionKey = { [C in keyof FeatureOptionCatalog & string]: ExpandFeatureOption<C, FeatureOptionCatalog[C][number]['name']> }[
+  keyof FeatureOptionCatalog & string] | `Debug.${string}`;
  

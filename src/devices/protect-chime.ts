@@ -8,13 +8,14 @@ import { ProtectReservedNames } from '../protect-types.js';
 import { toCamelCase } from '../protect-utils.js';
 import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION, PROTECT_HOMEKIT_UPDATE_DELAY } from '../settings.js';
 import type { ProtectChimeConfig } from '../unifi/index.js';
+import type { ProtectAccessoryContext } from './protect-accessory-context.js';
 import { ProtectDevice } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';
 
 export class ProtectChime extends ProtectDevice {
 
   private readonly eventTimers: Map<string, NodeJS.Timeout>;
-  public ufp: ProtectChimeConfig;
+  public override ufp: ProtectChimeConfig;
 
   // Create an instance.
   constructor(nvr: ProtectNvr, device: ProtectChimeConfig, accessory: PlatformAccessory) {
@@ -32,9 +33,7 @@ export class ProtectChime extends ProtectDevice {
   private configureDevice(): boolean {
 
     // Clean out the context object in case it's been polluted somehow.
-    this.accessory.context = {};
-    this.accessory.context.mac = this.ufp.mac;
-    this.accessory.context.nvr = this.nvr.ufp.mac;
+    this.accessory.context = { mac: this.ufp.mac, nvr: this.nvr.ufp.mac } satisfies ProtectAccessoryContext;
 
     // Configure accessory information.
     this.configureInfo();
@@ -65,6 +64,19 @@ export class ProtectChime extends ProtectDevice {
     this.configureMqtt();
 
     return true;
+  }
+
+  // Cleanup any inflight playback timers along with our event handlers.
+  public override cleanup(): void {
+
+    for(const timer of this.eventTimers.values()) {
+
+      clearTimeout(timer);
+    }
+
+    this.eventTimers.clear();
+
+    super.cleanup();
   }
 
   // Configure ringtone-specific switches.
@@ -118,13 +130,16 @@ export class ProtectChime extends ProtectDevice {
         tone = subtype.slice(ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER.length + 1);
       }
 
-      // Play the tone.
+      // Play the tone. If we fail, we inform HomeKit so it reverts the switch.
       if(!(await this.playTone(name, endpoint, tone))) {
 
         this.log.error('Unable to play ' + name + '.');
 
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.eventTimers.has(endpoint)), PROTECT_HOMEKIT_UPDATE_DELAY);
+        throw new this.hap.HapStatusError(this.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
       }
+
+      // If we have a playback event already inflight, reset it.
+      clearTimeout(this.eventTimers.get(endpoint));
 
       this.eventTimers.set(endpoint, setTimeout(() => {
 

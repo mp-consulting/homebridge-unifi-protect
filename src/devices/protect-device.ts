@@ -6,9 +6,12 @@
 import type { API, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from 'homebridge';
 import { type HomebridgePluginLogging, type Nullable, acquireService, sanitizeName, validService } from '../lib/index.js';
 import { PROTECT_HOMEKIT_UPDATE_DELAY, PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION } from '../settings.js';
-import type { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectNvrConfig } from '../unifi/index.js';
+import type { ProtectApi, ProtectCameraConfig, ProtectEventPacket, ProtectKnownDevicePayloads, ProtectKnownDeviceTypes,
+  ProtectNvrConfig } from '../unifi/index.js';
+import { type ProtectAccessoryContext, accessoryContext } from './protect-accessory-context.js';
 import { type ProtectDeviceConfigTypes, ProtectReservedNames } from '../protect-types.js';
 import type { ProtectNvr } from '../protect-nvr.js';
+import type { ProtectFeatureOptionKey } from '../protect-options.js';
 import type { ProtectPlatform } from '../protect-platform.js';
 import util from 'node:util';
 
@@ -60,8 +63,8 @@ export interface ProtectHints {
 export abstract class ProtectBase {
 
   public readonly api: API;
-  private debug: (message: string, ...parameters: unknown[]) => void;
   protected readonly hap: HAP;
+  protected listeners: Record<string, (packet: ProtectEventPacket) => void>;
   public readonly log: HomebridgePluginLogging;
   public readonly nvr: ProtectNvr;
   public ufpApi: ProtectApi;
@@ -71,8 +74,8 @@ export abstract class ProtectBase {
   constructor(nvr: ProtectNvr) {
 
     this.api = nvr.platform.api;
-    this.debug = nvr.platform.debug.bind(this);
     this.hap = this.api.hap;
+    this.listeners = {};
     this.nvr = nvr;
     this.ufpApi = nvr.ufpApi;
     this.platform = nvr.platform;
@@ -122,6 +125,29 @@ export abstract class ProtectBase {
     return true;
   }
 
+  // Subscribe to a controller event, tracking the listener so cleanup() can remove it. Subscribing to the same event again replaces the prior listener.
+  protected subscribe(event: string, handler: (packet: ProtectEventPacket) => void): void {
+
+    const priorListener = this.listeners[event];
+
+    if(priorListener) {
+
+      this.nvr.events.off(event, priorListener);
+    }
+
+    this.nvr.events.on(event, this.listeners[event] = handler);
+  }
+
+  // Cleanup our event handlers and any other activities as needed.
+  public cleanup(): void {
+
+    for(const [ eventName, listener ] of Object.entries(this.listeners)) {
+
+      this.nvr.events.off(eventName, listener);
+      delete this.listeners[eventName];
+    }
+  }
+
   // Utility function to return the fully enumerated name of this device. We default it to the controller but expect it to be overridden downstream.
   public get name(): string {
 
@@ -133,7 +159,6 @@ export abstract class ProtectDevice extends ProtectBase {
 
   public accessory!: PlatformAccessory;
   public hints: ProtectHints;
-  protected listeners: Record<string, (packet: ProtectEventPacket) => void>;
   public ufp: ProtectDeviceConfigTypes;
 
   // The constructor initializes key variables and calls configureDevice().
@@ -180,7 +205,6 @@ export abstract class ProtectDevice extends ProtectBase {
       twoWayAudio: false,
       twoWayAudioDirect: false,
     };
-    this.listeners = {};
     this.ufp = {} as ProtectDeviceConfigTypes;
   }
 
@@ -254,14 +278,33 @@ export abstract class ProtectDevice extends ProtectBase {
     return this.setInfo(this.accessory, this.ufp);
   }
 
-  // Cleanup our event handlers and any other activities as needed.
-  public cleanup(): void {
+  // Push a configuration update for this device to Protect. On success, our view of the device is updated and returned. On failure, we log the provided
+  // message and throw a HAP status error so that HomeKit is informed the write failed and reverts its view of the characteristic, instead of believing
+  // the write succeeded.
+  public async writeDevice(payload: ProtectKnownDevicePayloads, errorMessage: string, ...parameters: unknown[]): Promise<this['ufp']> {
 
-    for(const eventName of Object.keys(this.listeners)) {
+    const newDevice = await this.writeDeviceConfig(this.ufp, payload, errorMessage, ...parameters);
 
-      this.nvr.events.off(eventName, this.listeners[eventName]);
-      delete this.listeners[eventName];
+    // Update our internal view of the device configuration.
+    this.ufp = newDevice;
+
+    return newDevice;
+  }
+
+  // Push a configuration update for an arbitrary Protect device (e.g. a chime associated with a doorbell), throwing a HAP status error on failure.
+  public async writeDeviceConfig<T extends ProtectKnownDeviceTypes>(device: T, payload: ProtectKnownDevicePayloads, errorMessage: string,
+    ...parameters: unknown[]): Promise<T> {
+
+    const newDevice = await this.nvr.ufpApi.updateDevice(device, payload);
+
+    if(!newDevice) {
+
+      this.log.error(errorMessage, ...parameters);
+
+      throw new this.hap.HapStatusError(this.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
+
+    return newDevice;
   }
 
   // Utility to ease publishing of MQTT events.
@@ -354,7 +397,7 @@ export abstract class ProtectDevice extends ProtectBase {
 
       // If we disable the switch, make sure we fully reset it's state. Otherwise, we can end up in a situation (e.g. liveview switches) where we
       // have disabled motion detection with no meaningful way to enable it again.
-      this.accessory.context.detectMotion = true;
+      this.context.detectMotion = true;
 
       return false;
     }
@@ -371,25 +414,22 @@ export abstract class ProtectDevice extends ProtectBase {
     }
 
     // Activate or deactivate motion detection.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !!this.accessory.context.detectMotion);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !!this.context.detectMotion);
 
     service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
 
-      if(this.accessory.context.detectMotion !== value) {
+      if(this.context.detectMotion !== value) {
 
         this.log.info('Motion detection %s.', value ? 'enabled' : 'disabled');
       }
 
-      this.accessory.context.detectMotion = !!value;
+      this.context.detectMotion = !!value;
     });
 
     // Initialize the switch state.
-    if(!('detectMotion' in this.accessory.context)) {
+    this.context.detectMotion ??= true;
 
-      this.accessory.context.detectMotion = true;
-    }
-
-    service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.detectMotion as boolean);
+    service.updateCharacteristic(this.hap.Characteristic.On, this.context.detectMotion);
 
     this.log.info('Enabling motion sensor switch.');
 
@@ -503,7 +543,8 @@ export abstract class ProtectDevice extends ProtectBase {
         for(const smartDetectType of
           [ ...(this.ufp as ProtectCameraConfig).featureFlags.smartDetectAudioTypes, ...(this.ufp as ProtectCameraConfig).featureFlags.smartDetectTypes ]) {
 
-          if(this.hasFeature('Motion.OccupancySensor.' + smartDetectType)) {
+          // Protect defines the detection types at runtime, so these keys can't be checked against our catalog at compile time.
+          if(this.hasFeature(('Motion.OccupancySensor.' + smartDetectType) as ProtectFeatureOptionKey)) {
 
             this.hints.smartOccupancy.push(smartDetectType);
           }
@@ -556,13 +597,7 @@ export abstract class ProtectDevice extends ProtectBase {
       }
 
       // Update the status light in Protect.
-      if(!(await this.setStatusLed(!!value))) {
-
-        this.log.error('Unable to turn the status light %s. Please ensure this username has the Administrator role in UniFi Protect.',
-          value ? 'on' : 'off');
-
-        return;
-      }
+      await this.writeStatusLed(!!value);
     });
 
     // Initialize the switch state.
@@ -573,58 +608,59 @@ export abstract class ProtectDevice extends ProtectBase {
     return true;
   }
 
-  // Set the status indicator light on a device.
+  // Set the status indicator light on a device, throwing a HAP status error on failure. This is what HomeKit characteristic handlers should use.
+  public async writeStatusLed(value: boolean): Promise<void> {
+
+    await this.writeDevice(this.statusLedCommand(value),
+      'Unable to turn the status indicator light %s. Please ensure this username has the Administrator role in UniFi Protect.', value ? 'on' : 'off');
+  }
+
+  // Set the status indicator light on a device, returning whether we were successful. Errors have already been logged.
   public async setStatusLed(value: boolean): Promise<boolean> {
 
-    // Update the status light in Protect.
-    const newDevice = await this.nvr.ufpApi.updateDevice(this.ufp, this.statusLedCommand(value));
+    try {
 
-    if(!newDevice) {
-
-      this.log.error('Unable to turn the status indicator light %s. Please ensure this username has the Administrator role in UniFi Protect.',
-        value ? 'on' : 'off');
+      await this.writeStatusLed(value);
+    } catch {
 
       return false;
     }
-
-    // Update our internal view of the device configuration.
-    this.ufp = newDevice;
 
     return true;
   }
 
   // Utility function to return a floating point configuration parameter on a device.
-  public getFeatureFloat(option: string): Nullable<number | undefined> {
+  public getFeatureFloat(option: ProtectFeatureOptionKey): Nullable<number | undefined> {
 
     return this.platform.featureOptions.getFloat(option, this.ufp.mac, this.nvr.ufp.mac);
   }
 
   // Utility function to return an integer configuration parameter on a device.
-  public getFeatureNumber(option: string): Nullable<number | undefined> {
+  public getFeatureNumber(option: ProtectFeatureOptionKey): Nullable<number | undefined> {
 
     return this.platform.featureOptions.getInteger(option, this.ufp.mac, this.nvr.ufp.mac);
   }
 
   // Utility function to return a configuration parameter on a device.
-  public getFeatureValue(option: string): Nullable<string | undefined> {
+  public getFeatureValue(option: ProtectFeatureOptionKey): Nullable<string | undefined> {
 
     return this.platform.featureOptions.value(option, this.ufp.mac, this.nvr.ufp.mac);
   }
 
   // Utility for checking feature options on a device.
-  public hasFeature(option: string): boolean {
+  public hasFeature(option: ProtectFeatureOptionKey): boolean {
 
     return this.platform.featureOptions.test(option, this.ufp.mac, this.nvr.ufp.mac);
   }
 
   // Utility for returning the scope of a feature option.
-  public isDeviceFeature(option: string): boolean {
+  public isDeviceFeature(option: ProtectFeatureOptionKey): boolean {
 
     return this.platform.featureOptions.scope(option) === 'device';
   }
 
   // Utility for logging feature option availability.
-  public logFeature(option: string, message: string, nvrMessage = message): void {
+  public logFeature(option: ProtectFeatureOptionKey, message: string, nvrMessage = message): void {
 
     if(this.isDeviceFeature(option)) {
 
@@ -644,6 +680,12 @@ export abstract class ProtectDevice extends ProtectBase {
     return name ? ProtectDevice.RESERVED_NAMES_UPPER.has(name.toUpperCase()) : false;
   }
 
+  // Return a typed view of the persistent accessory context.
+  public get context(): ProtectAccessoryContext {
+
+    return accessoryContext(this.accessory);
+  }
+
   // Utility function to determine whether or not a device is currently online.
   public get isOnline(): boolean {
 
@@ -658,7 +700,7 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Utility function to return the fully enumerated name of this device.
-  public get name(): string {
+  public override get name(): string {
 
     return this.nvr.ufpApi.getDeviceName(this.ufp);
   }
@@ -684,7 +726,7 @@ export abstract class ProtectDevice extends ProtectBase {
   }
 
   // Utility to return the command to set the device status indicator light. This works for cameras and sensors, but Protect lights deal with this differently.
-  protected statusLedCommand(value: boolean): object {
+  protected statusLedCommand(value: boolean): ProtectKnownDevicePayloads {
 
     return { ledSettings: { isEnabled: value } };
   }

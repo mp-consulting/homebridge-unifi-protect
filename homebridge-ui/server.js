@@ -10,28 +10,253 @@ import { HomebridgePluginUiServer } from '../dist/lib/ui-server.js';
 import { ProtectApi } from '../dist/unifi/index.js';
 import { discoverOnvifEndpoints } from './onvif.js';
 import dgram from 'node:dgram';
+import dns from 'node:dns/promises';
+import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
+import net from 'node:net';
 import os from 'node:os';
 import util from 'node:util';
 
-// Validate a controller address, rejecting loopback, link-local, and unspecified addresses.
-function isValidAddress(address) {
+// Addresses the webUI server must never connect to on the user's behalf: loopback, link-local (which includes the 169.254.169.254 cloud metadata
+// endpoint), and unspecified addresses. Private RFC1918 ranges are intentionally allowed - that is where controllers and cameras live.
+const BLOCKED_ADDRESSES = new net.BlockList();
+
+BLOCKED_ADDRESSES.addSubnet('0.0.0.0', 8, 'ipv4');
+BLOCKED_ADDRESSES.addSubnet('127.0.0.0', 8, 'ipv4');
+BLOCKED_ADDRESSES.addSubnet('169.254.0.0', 16, 'ipv4');
+BLOCKED_ADDRESSES.addSubnet('::', 96, 'ipv6');
+BLOCKED_ADDRESSES.addSubnet('fe80::', 10, 'ipv6');
+BLOCKED_ADDRESSES.addAddress('fd00:ec2::254', 'ipv6');
+
+// Maximum snapshot payload we are willing to proxy back to the webUI. Enough for any 4K JPEG in practice.
+export const SNAPSHOT_MAX_BYTES = 10 * 1024 * 1024;
+
+// Check whether a single resolved IP address falls within a blocked range. Anything that isn't a well-formed IP is treated as blocked. IPv4-mapped IPv6
+// addresses (::ffff:a.b.c.d, in any spelling) are unwrapped and checked against the IPv4 rules.
+export function isBlockedIp(ip) {
+
+  let address = String(ip ?? '').trim().replace(/%.*$/, '');
+  let family = net.isIP(address);
+
+  if(family === 6) {
+
+    // Let the WHATWG URL parser canonicalize the IPv6 address so we only have one mapped-address spelling to recognize.
+    const canonical = new URL('http://[' + address + ']').hostname;
+    const mapped = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/.exec(canonical);
+
+    if(mapped) {
+
+      const high = parseInt(mapped[1], 16);
+      const low = parseInt(mapped[2], 16);
+
+      address = [ high >> 8, high & 0xFF, low >> 8, low & 0xFF ].join('.');
+      family = 4;
+    }
+  }
+
+  if(!family) {
+
+    return true;
+  }
+
+  return BLOCKED_ADDRESSES.check(address, (family === 4) ? 'ipv4' : 'ipv6');
+}
+
+// Reduce a user-supplied address (bare host, host:port, IPv6 literal with or without brackets) to the hostname we would actually resolve. The WHATWG URL
+// parser normalizes the alternate IPv4 spellings (0x7f.1, 2130706433, 017700000001) to dotted-quad for us. Returns null if the address is unusable.
+export function canonicalHostname(address) {
 
   if(!address || (typeof address !== 'string')) {
 
-    return false;
+    return null;
   }
 
-  const trimmed = address.trim().toLowerCase();
+  const trimmed = address.trim();
 
-  if(!trimmed || (trimmed === 'localhost') || trimmed.startsWith('127.') || trimmed.startsWith('169.254.') || (trimmed === '0.0.0.0') ||
-    trimmed.startsWith('[') || trimmed.includes('::')) {
+  if(!trimmed) {
+
+    return null;
+  }
+
+  if(net.isIP(trimmed)) {
+
+    return trimmed.toLowerCase();
+  }
+
+  try {
+
+    const hostname = new URL('http://' + trimmed).hostname.replace(/^\[|\]$/g, '');
+
+    return hostname || null;
+  } catch {
+
+    return null;
+  }
+}
+
+// Resolve an address and vet every IP it maps to. Throws if the address is unusable, does not resolve, or any of its IPs is blocked - a name that
+// resolves to both a LAN and a loopback address is rejected outright. Returns the first vetted address so callers can pin their connection to it and
+// avoid a second, possibly different, resolution (DNS rebinding).
+export async function resolveAllowedAddress(address, { isBlocked = isBlockedIp, lookup = dns.lookup } = {}) {
+
+  const hostname = canonicalHostname(address);
+
+  if(!hostname) {
+
+    throw new Error('Invalid address.');
+  }
+
+  const resolved = await lookup(hostname, { all: true, verbatim: true });
+
+  if(!Array.isArray(resolved) || !resolved.length) {
+
+    throw new Error('Unable to resolve ' + hostname + '.');
+  }
+
+  if(resolved.some(entry => isBlocked(entry.address))) {
+
+    throw new Error('Connections to ' + hostname + ' are not permitted.');
+  }
+
+  return { address: resolved[0].address, family: resolved[0].family, hostname };
+}
+
+// Boolean convenience wrapper around resolveAllowedAddress() for endpoints that simply refuse invalid addresses.
+export async function isValidAddress(address, options = {}) {
+
+  try {
+
+    await resolveAllowedAddress(address, options);
+
+    return true;
+  } catch {
 
     return false;
   }
+}
 
-  return true;
+// Build a net.connect-compatible lookup function that always answers with an address we already vetted, so the actual connection can't be steered
+// elsewhere by a second DNS answer.
+function pinnedLookup(vetted) {
+
+  return (_hostname, options, callback) => {
+
+    if(options?.all) {
+
+      callback(null, [{ address: vetted.address, family: vetted.family }]);
+
+      return;
+    }
+
+    callback(null, vetted.address, vetted.family);
+  };
+}
+
+// Fetch a camera snapshot on behalf of the webUI. Only http(s) URLs whose host resolves exclusively to permitted addresses are fetched, the connection is
+// pinned to the vetted address, the response must be an image, and the body is capped at maxBytes. Credentials embedded in the URL are forwarded as HTTP
+// Basic auth only when the URL's host matches expectedHost (the camera the user pointed ONVIF discovery at), when one is supplied. Resolves to
+// { contentType, data } with base64 data, or rejects with a descriptive error.
+export async function fetchSnapshot(url, { expectedHost, isBlocked, lookup, maxBytes = SNAPSHOT_MAX_BYTES, timeout = 15000 } = {}) {
+
+  if(!url || (typeof url !== 'string')) {
+
+    throw new Error('url is required.');
+  }
+
+  const parsed = new URL(url);
+
+  if((parsed.protocol !== 'http:') && (parsed.protocol !== 'https:')) {
+
+    throw new Error('Only http(s) snapshot URLs are supported.');
+  }
+
+  const vetted = await resolveAllowedAddress(parsed.host, { isBlocked, lookup });
+  const headers = {};
+
+  // Only hand the camera's credentials to the host the user actually asked us to talk to.
+  if(parsed.username && (!expectedHost || (canonicalHostname(expectedHost) === vetted.hostname))) {
+
+    const creds = decodeURIComponent(parsed.username) + ':' + decodeURIComponent(parsed.password || '');
+
+    headers.Authorization = 'Basic ' + globalThis.Buffer.from(creds, 'utf8').toString('base64');
+  }
+
+  const lib = (parsed.protocol === 'https:') ? https : http;
+
+  return new Promise((resolve, reject) => {
+
+    const req = lib.request({
+
+      headers,
+      hostname: vetted.hostname,
+      lookup: pinnedLookup(vetted),
+      method: 'GET',
+      path: parsed.pathname + parsed.search,
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      // Cameras almost universally present self-signed certificates, so we can't validate them here.
+      rejectUnauthorized: false,
+      // 15s rather than 5s: high-res Tapo snapshots can take several seconds to stream over the local network, especially when the camera is busy.
+      timeout,
+    }, (res) => {
+
+      if(res.statusCode !== 200) {
+
+        res.resume();
+        reject(new Error('HTTP ' + res.statusCode + (res.headers['www-authenticate'] ? ' (' + res.headers['www-authenticate'] + ')' : '')));
+
+        return;
+      }
+
+      const contentType = String(res.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+
+      if(!contentType.startsWith('image/')) {
+
+        res.destroy();
+        reject(new Error('Snapshot URL did not return an image (content-type: ' + (contentType || 'none') + ').'));
+
+        return;
+      }
+
+      const tooLarge = () => {
+
+        res.destroy();
+        reject(new Error('Snapshot payload exceeded ' + Math.round(maxBytes / (1024 * 1024)) + ' MB and was aborted.'));
+      };
+
+      if(Number(res.headers['content-length']) > maxBytes) {
+
+        tooLarge();
+
+        return;
+      }
+
+      const chunks = [];
+      let totalLength = 0;
+
+      res.on('data', (chunk) => {
+
+        totalLength += chunk.length;
+
+        // Abort the response rather than letting it finish then rejecting, so we don't waste bandwidth pulling down an oversized payload.
+        if(totalLength > maxBytes) {
+
+          tooLarge();
+
+          return;
+        }
+
+        chunks.push(chunk);
+      });
+      res.on('end', () => resolve({ contentType, data: globalThis.Buffer.concat(chunks).toString('base64') }));
+      res.on('error', reject);
+    });
+
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('Snapshot fetch timed out.')));
+    req.end();
+  });
 }
 
 // Number of adjacent /24 subnets to scan in each direction from each local interface.
@@ -59,15 +284,20 @@ const UBNT_TLV = {
   MODEL_SHORT: 0x0C,   // Short model name (e.g. "UNVR")
 };
 
-class PluginUiServer extends HomebridgePluginUiServer {
+// Maximum number of per-request error messages we hold on to for /getErrorMessage before discarding the oldest.
+const MAX_STORED_ERRORS = 20;
 
-  errorInfo;
+export class PluginUiServer extends HomebridgePluginUiServer {
+
+  // Error messages from /getDevices, keyed by the caller-supplied requestId so concurrent validations can't overwrite each other's errors.
+  #errors = new Map();
+
+  // The most recent /getDevices error, kept for callers that don't supply a requestId.
+  #lastError = '';
 
   constructor() {
 
     super();
-
-    this.errorInfo = '';
 
     // Register getErrorMessage() with the Homebridge server API.
     this.#registerGetErrorMessage();
@@ -126,102 +356,9 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
     this.onRequest('/fetchSnapshot', async (payload) => {
 
-      const url = payload?.url;
-
-      if(!url || (typeof url !== 'string')) {
-
-        return { error: 'url is required.', ok: false };
-      }
-
       try {
 
-        const result = await new Promise((resolve, reject) => {
-
-          let parsed;
-
-          try {
-
-            parsed = new URL(url);
-          } catch(err) {
-
-            reject(err);
-
-            return;
-          }
-
-          if((parsed.protocol !== 'http:') && (parsed.protocol !== 'https:')) {
-
-            reject(new Error('Only http(s) snapshot URLs are supported.'));
-
-            return;
-          }
-
-          const lib = (parsed.protocol === 'https:') ? https : http;
-          const headers = {};
-
-          if(parsed.username) {
-
-            const creds = decodeURIComponent(parsed.username) + ':' + decodeURIComponent(parsed.password || '');
-
-            headers.Authorization = 'Basic ' + globalThis.Buffer.from(creds, 'utf8').toString('base64');
-          }
-
-          const req = lib.request({
-
-            headers,
-            hostname: parsed.hostname,
-            method: 'GET',
-            path: parsed.pathname + parsed.search,
-            port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-            rejectUnauthorized: false,
-            // 15s rather than 5s: high-res Tapo snapshots can take several seconds to stream over the local network, especially when the camera is busy.
-            timeout: 15000,
-          }, (res) => {
-
-            if(res.statusCode !== 200) {
-
-              res.resume();
-              reject(new Error('HTTP ' + res.statusCode + (res.headers['www-authenticate'] ? ' (' + res.headers['www-authenticate'] + ')' : '')));
-
-              return;
-            }
-
-            const chunks = [];
-            let totalLength = 0;
-
-            res.on('data', (chunk) => {
-
-              totalLength += chunk.length;
-
-              // Cap streaming at ~4 MB. We abort the response (rather than letting it finish then rejecting) so we don't waste bandwidth pulling down
-              // a multi-megabyte original snapshot just to throw it away. 4 MB is enough for any 4K JPEG in practice.
-              if(totalLength > 4 * 1024 * 1024) {
-
-                res.destroy();
-                reject(new Error('Snapshot payload exceeded 4 MB and was aborted.'));
-
-                return;
-              }
-
-              chunks.push(chunk);
-            });
-            res.on('end', () => {
-
-              const buffer = globalThis.Buffer.concat(chunks);
-
-              resolve({
-
-                contentType: res.headers['content-type'] || 'image/jpeg',
-                data: buffer.toString('base64'),
-              });
-            });
-            res.on('error', reject);
-          });
-
-          req.on('error', reject);
-          req.on('timeout', () => req.destroy(new Error('Snapshot fetch timed out.')));
-          req.end();
-        });
+        const result = await fetchSnapshot(payload?.url, { expectedHost: (typeof payload?.host === 'string') ? payload.host : undefined });
 
         return { contentType: result.contentType, data: result.data, ok: true };
       } catch(err) {
@@ -231,23 +368,64 @@ class PluginUiServer extends HomebridgePluginUiServer {
     });
   }
 
+  // Record the error message produced by a /getDevices request so the webUI can retrieve it with /getErrorMessage.
+  #recordError(requestId, message) {
+
+    this.#lastError = message;
+
+    if((typeof requestId !== 'string') || !requestId) {
+
+      return;
+    }
+
+    this.#errors.delete(requestId);
+    this.#errors.set(requestId, message);
+
+    // Maps iterate in insertion order, so the first key is always the oldest entry.
+    while(this.#errors.size > MAX_STORED_ERRORS) {
+
+      this.#errors.delete(this.#errors.keys().next().value);
+    }
+  }
+
   // Register the getErrorMessage() webUI server API endpoint.
   #registerGetErrorMessage() {
 
-    // Return the most recent error message generated by the Protect API.
-    this.onRequest('/getErrorMessage', () => this.errorInfo);
+    // Return the error message generated by the /getDevices request identified by requestId, or the most recent one if no requestId is supplied.
+    this.onRequest('/getErrorMessage', (payload) => {
+
+      const requestId = payload?.requestId;
+
+      if((typeof requestId !== 'string') || !requestId) {
+
+        return this.#lastError;
+      }
+
+      const message = this.#errors.get(requestId) ?? '';
+
+      this.#errors.delete(requestId);
+
+      return message;
+    });
   }
 
   // Register the getDevices() webUI server API endpoint.
   #registerGetDevices() {
 
-    let ufpApi;
-
     // Return the list of Protect devices.
     this.onRequest('/getDevices', async (controller) => {
 
+      // Everything below is request-local so concurrent validations from the webUI can't clobber each other's API session or error message.
+      let errorInfo = '';
+      let ufpApi;
+
       // Validate the controller address before attempting a connection.
-      if(!isValidAddress(controller.address)) {
+      try {
+
+        await resolveAllowedAddress(controller?.address);
+      } catch(err) {
+
+        this.#recordError(controller?.requestId, err instanceof Error ? err.message : String(err));
 
         return [];
       }
@@ -260,10 +438,10 @@ class PluginUiServer extends HomebridgePluginUiServer {
           error: (message, parameters = []) => {
 
             // Save the error to inform the user in the webUI.
-            this.errorInfo = util.format(message, ...(Array.isArray(parameters) ? parameters : [parameters]));
+            errorInfo = util.format(message, ...(Array.isArray(parameters) ? parameters : [parameters]));
 
 
-            console.error(this.errorInfo);
+            console.error(errorInfo);
           },
           info: () => {},
           warn: () => {},
@@ -296,7 +474,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
         if(outcome === 'timeout') {
 
-          this.errorInfo = 'Timed out after ' + (GET_DEVICES_TIMEOUT_MS / 1000) + 's waiting for ' + controller.address +
+          errorInfo = 'Timed out after ' + (GET_DEVICES_TIMEOUT_MS / 1000) + 's waiting for ' + controller.address +
             ' to respond. Check that the address and credentials are correct and that the controller is reachable from this Homebridge host.';
 
           return [];
@@ -367,6 +545,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
       } finally {
 
         ufpApi?.logout();
+        this.#recordError(controller?.requestId, errorInfo);
       }
     });
   }
@@ -561,20 +740,24 @@ class PluginUiServer extends HomebridgePluginUiServer {
   // Register the checkStatus() webUI server API endpoint.
   #registerCheckStatus() {
 
-    this.onRequest('/checkStatus', (payload) => {
+    this.onRequest('/checkStatus', async (payload) => {
+
+      let vetted;
+
+      try {
+
+        vetted = await resolveAllowedAddress(payload?.address);
+      } catch {
+
+        return { online: false };
+      }
 
       return new Promise((resolve) => {
 
-        if(!isValidAddress(payload?.address)) {
-
-          resolve({ online: false });
-
-          return;
-        }
-
         const req = https.request({
 
-          hostname: payload.address,
+          hostname: vetted.hostname,
+          lookup: pinnedLookup(vetted),
           method: 'HEAD',
           path: '/',
           port: 443,
@@ -595,4 +778,20 @@ class PluginUiServer extends HomebridgePluginUiServer {
   }
 }
 
-(() => new PluginUiServer())();
+// Only start the server when this file is the process entry point - the Homebridge UI forks it directly - so tests can import the helpers above without
+// spinning up an IPC server. We compare real paths because the plugin is frequently installed through a symlink (npm link, pnpm).
+const isEntryPoint = (() => {
+
+  try {
+
+    return (typeof process.argv[1] === 'string') && (fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)));
+  } catch {
+
+    return false;
+  }
+})();
+
+if(isEntryPoint) {
+
+  new PluginUiServer();
+}

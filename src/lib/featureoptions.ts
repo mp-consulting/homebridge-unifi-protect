@@ -26,6 +26,9 @@ export interface FeatureCategoryEntry {
 // Describes all possible scope hierarchy locations for a feature option.
 export type OptionScope = 'controller' | 'device' | 'global' | 'none';
 
+// Matches a decimal option value, such as "12.5".
+const DECIMAL_VALUE = /^-?\d+\.\d+$/;
+
 // Internal entry in the configured options lookup index.
 type ConfigLookupEntry = {
 
@@ -37,7 +40,7 @@ type ConfigLookupEntry = {
 type ResolvedScopeEntry = {
 
   enabled: boolean;
-  optionValue?: string;
+  optionValue?: string | undefined;
   scope: OptionScope;
 };
 
@@ -50,6 +53,10 @@ export class FeatureOptions {
   // Default return value for unknown options (defaults to false).
   public defaultReturnValue: boolean;
 
+  // Recognizes scope identifiers (device or controller ids). "Enable.Option.X" is ambiguous for a value-centric option - X could be a global value or the id
+  // of a device being enabled without a value. When we can tell X is an identifier, we treat it as a scope rather than as a global value.
+  private readonly isIdentifier: ((segment: string) => boolean) | undefined;
+
   private _categories: FeatureCategoryEntry[];
   private _configuredOptions: string[];
   private _groups: { [index: string]: string[] };
@@ -59,7 +66,8 @@ export class FeatureOptions {
   private valueOptions: { [index: string]: number | string | undefined };
 
   // Create a new FeatureOptions instance using the available categories and options, and the list of currently configured options.
-  constructor(categories: FeatureCategoryEntry[], options: { [index: string]: FeatureOptionEntry[] }, configuredOptions: string[] = []) {
+  constructor(categories: FeatureCategoryEntry[], options: { [index: string]: FeatureOptionEntry[] }, configuredOptions: string[] = [],
+    settings: { isIdentifier?: (segment: string) => boolean } = {}) {
 
     // Initialize our defaults.
     this._categories = [];
@@ -69,11 +77,19 @@ export class FeatureOptions {
     this.configLookup = new Map();
     this.defaultReturnValue = false;
     this.defaults = {};
+    this.isIdentifier = settings.isIdentifier;
     this.valueOptions = {};
 
     this.categories = categories;
     this.configuredOptions = configuredOptions;
     this.options = options;
+  }
+
+  // Determine whether a configuration segment could be a scope id. We defer to the caller-supplied recognizer when we have one. Otherwise, a short run of
+  // digits is a number rather than an id - device and controller ids are MAC addresses or longer hexadecimal identifiers.
+  private looksLikeIdentifier(segment: string): boolean {
+
+    return this.isIdentifier?.(segment) ?? !/^\d{1,11}$/.test(segment);
   }
 
   // Return a Bootstrap-specific color reference depending on the scope of a given feature option.
@@ -277,7 +293,7 @@ export class FeatureOptions {
       }
 
       // Now enumerate all the feature options for a given device and add then to the full list.
-      for(const option of this.options[category.name]) {
+      for(const option of this.options[category.name] ?? []) {
 
         // Expand the entry.
         const entry = this.expandOption(category, option);
@@ -447,11 +463,23 @@ export class FeatureOptions {
         const extraOriginal = tailOriginal.slice(optName.length + 1);
         const separatorIndex = extra.indexOf('.');
 
+        // A decimal value such as "12.5" contains a dot of its own. When the whole remainder is a decimal number and its integer part can't be a scope id, it's
+        // a global value rather than an id followed by a value.
+        if((separatorIndex !== -1) && DECIMAL_VALUE.test(extraOriginal) && !this.looksLikeIdentifier(extraOriginal.slice(0, separatorIndex))) {
+
+          if(!this.configLookup.has(optName)) {
+
+            this.configLookup.set(optName, { enabled: true, value: extraOriginal });
+          }
+
+          break;
+        }
+
         if(separatorIndex === -1) {
 
           // Single trailing segment after the option name. At global scope this is the value; at scoped scope it's the id. Register under the option name as
-          // the base key so that global value lookups find it.
-          if(!this.configLookup.has(optName)) {
+          // the base key so that global value lookups find it - unless we can tell it's an id, in which case the scoped tail key registered above suffices.
+          if(!this.configLookup.has(optName) && !this.isIdentifier?.(extraOriginal)) {
 
             this.configLookup.set(optName, { enabled: true, value: extraOriginal });
           }
@@ -461,8 +489,8 @@ export class FeatureOptions {
           const idLower = extra.slice(0, separatorIndex);
           const valueOriginal = extraOriginal.slice(separatorIndex + 1);
 
-          // Only register if the value portion is a single segment (no additional dots).
-          if(!valueOriginal.includes('.')) {
+          // Only register if the value portion is a single segment (no additional dots), or a decimal number.
+          if(!valueOriginal.includes('.') || DECIMAL_VALUE.test(valueOriginal)) {
 
             const baseKey = optName + '.' + idLower;
 

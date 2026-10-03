@@ -10,6 +10,7 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
+import net from 'node:net';
 
 // Common ONVIF service ports tried in order when the user does not specify one or when the configured port refuses the connection. 80 is the spec
 // default; 8000/8080/2020/8899 cover the bulk of consumer cameras (Tapo uses 2020, some Hikvision/Dahua use 8000/8080, Reolink uses 8000).
@@ -18,6 +19,9 @@ const DEFAULT_ONVIF_PORTS = [ 80, 8000, 8080, 2020, 8899 ];
 const DEFAULT_SERVICE_PATH = '/onvif/device_service';
 
 const SOAP_TIMEOUT_MS = 5000;
+
+// ONVIF SOAP responses are a few kilobytes in practice. Anything beyond this is not a well-behaved camera and we stop reading rather than buffer it.
+export const SOAP_MAX_BYTES = 1024 * 1024;
 
 // Build a WS-Security UsernameToken header with PasswordDigest authentication. The digest is Base64(SHA1(nonceBytes + created + password)).
 function buildSecurityHeader(username, password) {
@@ -96,8 +100,22 @@ function soapPost(url, soapAction, body) {
     }, (res) => {
 
       const chunks = [];
+      let totalLength = 0;
 
-      res.on('data', chunk => chunks.push(chunk));
+      res.on('data', (chunk) => {
+
+        totalLength += chunk.length;
+
+        if(totalLength > SOAP_MAX_BYTES) {
+
+          res.destroy();
+          reject(new Error('ONVIF response exceeded ' + (SOAP_MAX_BYTES / (1024 * 1024)) + ' MB and was aborted.'));
+
+          return;
+        }
+
+        chunks.push(chunk);
+      });
       res.on('end', () => {
 
         const text = Buffer.concat(chunks).toString('utf8');
@@ -224,35 +242,126 @@ async function getSnapshotUri(mediaServiceUrl, profileToken, username, password)
   return extractTag(stripNamespaces(response), 'Uri');
 }
 
-// Inject the user-supplied credentials into the URL returned by ONVIF, since most cameras hand back a URL without embedded auth even though every
-// stream/snapshot request needs to authenticate.
-function injectCredentials(uri, username, password) {
+// Normalize a hostname for comparison: lowercase, IPv6 brackets stripped, and alternate IPv4 spellings collapsed to dotted-quad by the WHATWG URL parser.
+// Accepts either a bare host (as the user typed it) or a full URL's hostname. Returns null for anything unparseable.
+function normalizeHost(host) {
 
-  if(!uri || !username) {
+  const trimmed = String(host ?? '').trim().replace(/^\[|\]$/g, '');
 
-    return uri;
+  if(!trimmed) {
+
+    return null;
   }
 
   try {
 
-    const u = new URL(uri);
-
-    u.username = encodeURIComponent(username);
-    u.password = encodeURIComponent(password);
-
-    return u.toString();
+    return new URL('http://' + ((net.isIP(trimmed) === 6) ? '[' + trimmed + ']' : trimmed)).hostname.replace(/^\[|\]$/g, '') || null;
   } catch {
 
-    return uri;
+    return null;
   }
+}
+
+// Check whether a URL returned by the camera points at the host the user entered. Ports are allowed to differ (cameras routinely serve RTSP, HTTP
+// snapshots, and ONVIF on different ports); the hostname comparison is case-insensitive.
+export function urlMatchesHost(uri, host) {
+
+  const expected = normalizeHost(host);
+
+  if(!expected) {
+
+    return false;
+  }
+
+  try {
+
+    return normalizeHost(new URL(uri).hostname) === expected;
+  } catch {
+
+    return false;
+  }
+}
+
+// Inject the user-supplied credentials into the URL returned by ONVIF, since most cameras hand back a URL without embedded auth even though every
+// stream/snapshot request needs to authenticate. Credentials are only ever injected into URLs that point back at the host the user entered - a camera
+// (or anything impersonating one) returning a URL on some other host must not be able to harvest them. Any credentials the camera embedded itself in a
+// foreign URL are stripped as well. Returns { url, credentialsWithheld }.
+export function injectCredentials(uri, username, password, host) {
+
+  if(!uri) {
+
+    return { credentialsWithheld: false, url: uri };
+  }
+
+  let u;
+
+  try {
+
+    u = new URL(uri);
+  } catch {
+
+    return { credentialsWithheld: false, url: uri };
+  }
+
+  if(!urlMatchesHost(uri, host)) {
+
+    u.username = '';
+    u.password = '';
+
+    return { credentialsWithheld: Boolean(username), url: u.toString() };
+  }
+
+  if(username) {
+
+    u.username = encodeURIComponent(username);
+    u.password = encodeURIComponent(password ?? '');
+  }
+
+  return { credentialsWithheld: false, url: u.toString() };
+}
+
+// Decide which media service URL we will actually send authenticated SOAP requests to. If the camera's advertised XAddr points at the host the user
+// entered we use it as-is. Otherwise (a NAT'd camera reporting its internal IP, or a hostile device trying to redirect us) we keep the advertised path
+// but send it to the user's host and the port that answered the device service. Returns { url, rewritten }.
+export function resolveMediaServiceUrl(xAddr, host, port) {
+
+  if(urlMatchesHost(xAddr, host)) {
+
+    return { rewritten: false, url: xAddr };
+  }
+
+  let path = '/onvif/media_service';
+
+  try {
+
+    const u = new URL(xAddr);
+
+    path = u.pathname + u.search;
+  } catch {
+
+    // Fall back to the conventional media service path if the camera returned something unparseable.
+  }
+
+  const hostPart = (net.isIP(normalizeHost(host) ?? '') === 6) ? '[' + normalizeHost(host) + ']' : host;
+
+  return { rewritten: true, url: 'http://' + hostPart + ':' + port + path };
 }
 
 // Run the full discovery flow against a single host:port. Throws if anything goes wrong - the caller is expected to walk through fallback ports.
 // Returns one entry per profile, each carrying its own RTSP and snapshot URL plus the metadata the UI uses to label the picker.
 async function discoverAt(host, port, servicePath, username, password) {
 
-  const deviceServiceUrl = 'http://' + host + ':' + port + servicePath;
-  const mediaServiceUrl = await getMediaServiceUrl(deviceServiceUrl, username, password);
+  const hostPart = (net.isIP(host) === 6) ? '[' + host + ']' : host;
+  const deviceServiceUrl = 'http://' + hostPart + ':' + port + servicePath;
+  const warnings = [];
+  const media = resolveMediaServiceUrl(await getMediaServiceUrl(deviceServiceUrl, username, password), host, port);
+  const mediaServiceUrl = media.url;
+
+  if(media.rewritten) {
+
+    warnings.push('The camera advertised its media service on a different host. Using ' + host + ' instead.');
+  }
+
   const profiles = await getProfiles(mediaServiceUrl, username, password);
 
   // Fan out per profile so we can fetch all stream and snapshot URLs in a single round of parallelism. Individual profile failures are tolerated -
@@ -265,15 +374,24 @@ async function discoverAt(host, port, servicePath, username, password) {
       getSnapshotUri(mediaServiceUrl, profile.token, username, password).catch(() => null),
     ]);
 
+    const rtsp = injectCredentials(rtspUri, username, password, host);
+    const snapshot = injectCredentials(snapshotUri, username, password, host);
+
     return {
 
       ...profile,
-      rtspUrl: injectCredentials(rtspUri, username, password),
-      snapshotUrl: injectCredentials(snapshotUri, username, password),
+      credentialsWithheld: rtsp.credentialsWithheld || snapshot.credentialsWithheld,
+      rtspUrl: rtsp.url,
+      snapshotUrl: snapshot.url,
     };
   }));
 
-  return { profiles: results };
+  if(results.some(profile => profile.credentialsWithheld)) {
+
+    warnings.push('The camera returned stream or snapshot URLs on a different host than ' + host + '. Credentials were not added to those URLs.');
+  }
+
+  return { profiles: results, warnings };
 }
 
 // Public entry point. Tries the user-supplied port first (or each common port), then falls back to other common ONVIF ports if the connection fails.

@@ -133,6 +133,26 @@ describe('createSegmentQueueProcessor', () => {
     expect(() => processor(segment)).not.toThrow();
   });
 
+  it('discards the oldest queued segments beyond the queue limit', () => {
+
+    const mockStdin = createMockStdin(false);
+    const log = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const processor = createSegmentQueueProcessor(() => mockStdin as unknown as Writable, undefined, { log, maxLength: 2 });
+    const segments = [ 'one', 'two', 'three', 'four', 'five' ].map(value => Buffer.from(value));
+
+    // The first segment goes straight to stdin, which then signals backpressure. The rest queue up behind it, but only the newest two are kept.
+    segments.forEach(segment => processor(segment));
+    expect(log.debug).toHaveBeenCalledTimes(1);
+
+    mockStdin.write.mockImplementation((data: Buffer) => {
+      mockStdin.written.push(data);
+      return true;
+    });
+    mockStdin.emit('drain');
+
+    expect(mockStdin.written).toEqual([ segments[0], segments[3], segments[4] ]);
+  });
+
   it('processes multiple segments in order', () => {
 
     const mockStdin = createMockStdin(true);

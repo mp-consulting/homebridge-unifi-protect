@@ -1,81 +1,14 @@
 /* Copyright(C) 2017-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
  *
- * recording-duration.test.ts: Tests for the HKSV recording duration formatting logic from protect-record.ts.
- *
- * The duration formatting logic from stopTransmitting() is tested in isolation.
+ * recording-duration.test.ts: Tests for the HKSV recording duration formatting used by ProtectRecordingDelegate.stopTransmitting().
  */
+import { formatRecordingDuration as formatSeconds } from '../src/protect-utils.js';
 
-// Reproduction of the recording duration formatting logic from ProtectRecordingDelegate.stopTransmitting().
+// ProtectRecordingDelegate computes recordedSeconds as (timeshiftedSegments * segmentLength) / 1000 before formatting. Mirror that conversion only; the
+// formatting itself is the real implementation from protect-utils.ts.
 function formatRecordingDuration(timeshiftedSegments: number, segmentLength: number): { time: string; unit: string } {
 
-  const recordedSeconds = (timeshiftedSegments * segmentLength) / 1000;
-
-  let recordedTime = '';
-
-  const hours = Math.floor(recordedSeconds / 3600);
-  const minutes = Math.floor((recordedSeconds % 3600) / 60);
-  const seconds = Math.floor((recordedSeconds % 3600) % 60);
-
-  if(recordedSeconds < 1) {
-
-    recordedTime = recordedSeconds.toString();
-  } else if(recordedSeconds < 60) {
-
-    recordedTime = Math.round(recordedSeconds).toString();
-  } else {
-
-    if(hours > 9) {
-
-      recordedTime = hours.toString() + ':';
-    } else if(hours > 0) {
-
-      recordedTime = '0' + hours.toString() + ':';
-    }
-
-    if(minutes > 9) {
-
-      recordedTime += minutes.toString() + ':';
-    } else if(minutes > 0) {
-
-      recordedTime += ((hours > 0) ? '0' : '') + minutes.toString() + ':';
-    } else if(hours > 0) {
-
-      recordedTime += '00:';
-    }
-
-    if(recordedTime.length && (seconds < 10)) {
-
-      recordedTime += '0' + seconds.toString();
-    } else {
-
-      recordedTime += seconds ? seconds.toString() : recordedSeconds.toString();
-    }
-  }
-
-  let timeUnit;
-
-  switch(recordedTime.split(':').length - 1) {
-
-    case 1:
-
-      timeUnit = 'minute';
-
-      break;
-
-    case 2:
-
-      timeUnit = 'hour';
-
-      break;
-
-    default:
-
-      timeUnit = 'second';
-
-      break;
-  }
-
-  return { time: recordedTime, unit: timeUnit };
+  return formatSeconds((timeshiftedSegments * segmentLength) / 1000);
 }
 
 describe('Recording Duration Formatting', () => {
@@ -206,6 +139,15 @@ describe('Recording Duration Formatting', () => {
       const result = formatRecordingDuration(18000, SEGMENT_LENGTH);
 
       expect(result.time).toBe('01:15:00');
+      expect(result.unit).toBe('hour');
+    });
+
+    it('zero-pads single-digit hours up to 9', () => {
+
+      // 129600 segments * 250ms = 32400 seconds = 9h. → "09:00:00".
+      const result = formatRecordingDuration(129600, SEGMENT_LENGTH);
+
+      expect(result.time).toBe('09:00:00');
       expect(result.unit).toBe('hour');
     });
 

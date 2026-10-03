@@ -6,6 +6,7 @@
 import { type Nullable, acquireService, sanitizeName, validService } from '../lib/index.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from '../settings.js';
 import type { PlatformAccessory } from 'homebridge';
+import type { ProtectAccessoryContext } from './protect-accessory-context.js';
 import { ProtectBase } from './protect-device.js';
 import type { ProtectEventPacket } from '../unifi/index.js';
 import type { ProtectNvr } from '../protect-nvr.js';
@@ -13,7 +14,6 @@ import type { ProtectNvr } from '../protect-nvr.js';
 export class ProtectNvrSystemInfo extends ProtectBase {
 
   private accessory: Nullable<PlatformAccessory> | undefined;
-  private eventListener: Nullable<(packet: ProtectEventPacket) => void>;
   private isConfigured: boolean;
 
   // Configure our NVR sensor capability.
@@ -24,13 +24,13 @@ export class ProtectNvrSystemInfo extends ProtectBase {
 
     // Initialize the class.
     this.accessory = null;
-    this.eventListener = null;
     this.isConfigured = false;
 
     this.configureAccessory();
     this.configureMqtt();
 
-    this.nvr.events.on('updateEvent.' + this.nvr.ufp.id, this.eventListener = this.eventHandler.bind(this));
+    // Listen for events. Our listener is removed when cleanup() is called.
+    this.subscribe('updateEvent.' + this.nvr.ufp.id, (packet) => this.eventHandler(packet));
   }
 
   // Configure the NVR system information accessory.
@@ -54,7 +54,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     }
 
     // If we've disabled NVR system information, remove the accessory if it exists.
-    if(!this.nvr.hasFeature('NVR.SystemInfo')) {
+    if(!this.nvr.hasFeature('Nvr.SystemInfo')) {
 
       if(this.accessory) {
 
@@ -84,9 +84,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
 
     // We have the system information accessory, now let's configure it.
     // Clean out the context object in case it's been polluted somehow.
-    this.accessory.context = {};
-    this.accessory.context.nvr = this.nvr.ufp.mac;
-    this.accessory.context.systemInfo = true;
+    this.accessory.context = { nvr: this.nvr.ufp.mac, systemInfo: true } satisfies ProtectAccessoryContext;
 
     // Configure accessory information.
     if(this.nvr.ufpApi.bootstrap) {
@@ -120,16 +118,6 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     }
   }
 
-  // Cleanup our listeners.
-  private cleanupEvents(): void {
-
-    if(this.eventListener) {
-
-      this.nvr.events.off('updateEvent.' + this.nvr.ufp.id, this.eventListener);
-      this.eventListener = null;
-    }
-  }
-
   // Update accessory services and characteristics.
   private updateDevice(configureHandler = false): string[] {
 
@@ -154,7 +142,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     }
 
     // Validate the service.
-    if(!validService(this.accessory, this.hap.Service.TemperatureSensor, this.nvr.hasFeature('NVR.SystemInfo'))) {
+    if(!validService(this.accessory, this.hap.Service.TemperatureSensor, this.nvr.hasFeature('Nvr.SystemInfo'))) {
 
       return false;
     }

@@ -1,83 +1,84 @@
 /* Copyright(C) 2017-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
  *
- * snapshot-cache.test.ts: Tests for snapshot cache expiry logic from protect-snapshot.ts.
+ * snapshot-cache.test.ts: Tests for the snapshot cache expiry in ProtectSnapshot (protect-snapshot.ts).
  *
- * The cachedSnapshot getter determines whether a previously captured snapshot is still usable
- * based on its age relative to PROTECT_SNAPSHOT_CACHE_MAXAGE.
+ * The private cachedSnapshot getter determines whether a previously captured snapshot is still usable as a fallback, based on its age relative to
+ * PROTECT_SNAPSHOT_CACHE_MAXAGE. The shorter freshness window is covered in snapshot-pipeline.test.ts.
  */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROTECT_SNAPSHOT_CACHE_MAXAGE } from '../src/settings.js';
+import type { ProtectCamera } from '../src/devices/index.js';
+import { ProtectSnapshot } from '../src/protect-snapshot.js';
 
-// Reproduction of the cachedSnapshot getter logic from ProtectSnapshot.
-function getCachedSnapshot(
-  cache: { image: Buffer; time: number } | null,
-  now: number,
-  maxAge: number,
-): Buffer | null {
+// The private state of ProtectSnapshot that we seed and inspect.
+interface SnapshotInternals {
 
-  if(!cache || ((now - cache.time) > (maxAge * 1000))) {
+  _cachedSnapshot: { image: Buffer; lastMotion: null; lastRing: null; time: number } | null;
+  readonly cachedSnapshot: Buffer | null;
+}
 
-    return null;
-  }
+const NOW = 1_700_000_000_000;
+const IMAGE = Buffer.from('fake-jpeg-data');
 
-  return cache.image;
+// Create a real ProtectSnapshot with a cached image taken at the given time, and read it back through the cachedSnapshot getter.
+function readCache(time: number | null): { internals: SnapshotInternals; result: Buffer | null } {
+
+  const snapshot = new ProtectSnapshot({ log: {}, nvr: {}, platform: {} } as unknown as ProtectCamera) as unknown as SnapshotInternals;
+
+  snapshot._cachedSnapshot = (time === null) ? null : { image: IMAGE, lastMotion: null, lastRing: null, time };
+
+  return { internals: snapshot, result: snapshot.cachedSnapshot };
 }
 
 describe('Snapshot Cache Expiry', () => {
 
-  const IMAGE = Buffer.from('fake-jpeg-data');
-  const MAX_AGE = PROTECT_SNAPSHOT_CACHE_MAXAGE;
+  const MAX_AGE_MS = PROTECT_SNAPSHOT_CACHE_MAXAGE * 1000;
+
+  beforeEach(() => {
+
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+
+    vi.useRealTimers();
+  });
 
   it('returns the cached image when it is fresh', () => {
 
-    const now = Date.now();
-    const cache = { image: IMAGE, time: now - 1000 }; // 1 second old.
-
-    expect(getCachedSnapshot(cache, now, MAX_AGE)).toBe(IMAGE);
+    expect(readCache(NOW - 1000).result).toBe(IMAGE);
   });
 
-  it('returns null when cache is null', () => {
+  it('returns null when nothing is cached', () => {
 
-    expect(getCachedSnapshot(null, Date.now(), MAX_AGE)).toBeNull();
+    expect(readCache(null).result).toBeNull();
   });
 
-  it('returns null when cache is expired', () => {
+  it('returns null and discards the cache when it is expired', () => {
 
-    const now = Date.now();
-    const cache = { image: IMAGE, time: now - (MAX_AGE * 1000) - 1 }; // Just past expiry.
+    const { internals, result } = readCache(NOW - MAX_AGE_MS - 1);
 
-    expect(getCachedSnapshot(cache, now, MAX_AGE)).toBeNull();
+    expect(result).toBeNull();
+    expect(internals._cachedSnapshot).toBeNull();
   });
 
-  it('returns image when cache is exactly at the boundary', () => {
-
-    const now = Date.now();
-    const cache = { image: IMAGE, time: now - (MAX_AGE * 1000) }; // Exactly at maxAge.
+  it('returns the image when the cache is exactly at the boundary', () => {
 
     // (now - time) === maxAge * 1000, which is NOT > maxAge * 1000, so it should still be valid.
-    expect(getCachedSnapshot(cache, now, MAX_AGE)).toBe(IMAGE);
+    expect(readCache(NOW - MAX_AGE_MS).result).toBe(IMAGE);
   });
 
-  it('returns image for brand new cache', () => {
+  it('returns the image for a brand new cache', () => {
 
-    const now = Date.now();
-    const cache = { image: IMAGE, time: now }; // Just cached.
-
-    expect(getCachedSnapshot(cache, now, MAX_AGE)).toBe(IMAGE);
+    expect(readCache(NOW).result).toBe(IMAGE);
   });
 
-  it('handles different max age values', () => {
+  it('keeps an unexpired cache in place after reading it', () => {
 
-    const now = Date.now();
+    const { internals } = readCache(NOW - 1000);
 
-    // With 1 second max age.
-    const youngCache = { image: IMAGE, time: now - 500 };
-
-    expect(getCachedSnapshot(youngCache, now, 1)).toBe(IMAGE);
-
-    // Same cache but with 0 second max age (effectively disabled).
-    const oldCache = { image: IMAGE, time: now - 500 };
-
-    expect(getCachedSnapshot(oldCache, now, 0)).toBeNull();
+    expect(internals._cachedSnapshot?.image).toBe(IMAGE);
   });
 
   it('PROTECT_SNAPSHOT_CACHE_MAXAGE is a positive number', () => {

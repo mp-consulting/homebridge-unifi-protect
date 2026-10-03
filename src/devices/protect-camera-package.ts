@@ -11,14 +11,27 @@ import { PROTECT_FFMPEG_PROBESIZE_PACKAGE, PROTECT_HOMEKIT_UPDATE_DELAY } from '
 import { ProtectReservedNames } from '../protect-types.js';
 import { ProtectStreamingDelegate } from '../protect-stream.js';
 
-// Package camera class. To avoid circular dependencies, this has to be declared in the same file as ProtectCamera, given the ProtectCamera class references it.
+// The hint properties that package cameras share with their parent camera and should be kept in sync.
+const SHARED_HINT_KEYS = [
+
+  'hardwareDecoding', 'hardwareTranscoding', 'highResSnapshots', 'logHksv', 'transcode', 'transcodeBitrate', 'transcodeHighLatency',
+  'transcodeHighLatencyBitrate', 'tsbStreaming',
+] as const satisfies readonly (keyof ProtectHints)[];
+
+// Copy a single hint from one hints object to another, preserving the type relationship between the key and its value.
+function copyHint<K extends keyof ProtectHints>(target: ProtectHints, source: ProtectHints, key: K): void {
+
+  target[key] = source[key];
+}
+
+// Package camera class.
 export class ProtectCameraPackage extends ProtectCamera {
 
   private flashlightState?: boolean;
-  private flashlightTimer?: NodeJS.Timeout;
+  private flashlightTimer?: NodeJS.Timeout | undefined;
 
   // Configure the package camera.
-  protected configureDevice(): boolean {
+  protected override configureDevice(): boolean {
 
     // Get our parent camera.
     const parentCamera = this.nvr.getDeviceById(this.ufp.id);
@@ -26,19 +39,12 @@ export class ProtectCameraPackage extends ProtectCamera {
     this.flashlightState = false;
     this.hints.probesize = PROTECT_FFMPEG_PROBESIZE_PACKAGE;
 
-    // Inherit settings from our parent. These are the hint properties that package cameras share with their parent camera and should be kept in sync.
-    const sharedHintKeys: (keyof ProtectHints)[] = [
-
-      'hardwareDecoding', 'hardwareTranscoding', 'highResSnapshots', 'logHksv', 'transcode', 'transcodeBitrate', 'transcodeHighLatency',
-      'transcodeHighLatencyBitrate', 'tsbStreaming',
-    ];
-
+    // Inherit settings from our parent.
     if(parentCamera) {
 
-      for(const key of sharedHintKeys) {
+      for(const key of SHARED_HINT_KEYS) {
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (this.hints as any)[key] = parentCamera.hints[key];
+        copyHint(this.hints, parentCamera.hints, key);
       }
     }
 
@@ -46,7 +52,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     this.initializeContext();
 
     // We explicitly avoid adding the MAC address of the camera - that's reserved for real Protect devices, not synthetic ones we create.
-    this.accessory.context.packageCamera = this.ufp.mac;
+    this.context.packageCamera = this.ufp.mac;
 
     // Configure accessory information.
     this.configureInfo();
@@ -58,13 +64,14 @@ export class ProtectCameraPackage extends ProtectCamera {
     this.configureFlashlight();
 
     let hkResolutions: Resolution[];
-    const validResolutions: Resolution[] = [this.findRtsp()?.resolution ?? [ 1600, 1200, 2 ]];
+    const nativeResolution: Resolution = this.findRtsp()?.resolution ?? [ 1600, 1200, 2 ];
+    const validResolutions: Resolution[] = [nativeResolution];
 
     // Ensure we have mandatory resolutions required by HomeKit, as well as special support for Apple TV and Apple Watch, while respecting aspect ratios.
     // We use the frame rate of the first entry, which should be our highest resolution option that's native to the camera as the upper bound for frame rate.
     //
     // Our supported resolutions range from 4K through 320p...even for package cameras.
-    if((validResolutions[0][0] / validResolutions[0][1]) === (16 / 9)) {
+    if((nativeResolution[0] / nativeResolution[1]) === (16 / 9)) {
 
       hkResolutions = [
 
@@ -89,7 +96,7 @@ export class ProtectCameraPackage extends ProtectCamera {
 
       // This resolution is larger than the highest resolution on the camera, natively. We make an exception for
       // 1080p and 720p resolutions since HomeKit explicitly requires them.
-      if((entry[0] >= validResolutions[0][0]) && ![ 1920, 1280 ].includes(entry[0])) {
+      if((entry[0] >= nativeResolution[0]) && ![ 1920, 1280 ].includes(entry[0])) {
 
         continue;
       }
@@ -108,7 +115,7 @@ export class ProtectCameraPackage extends ProtectCamera {
 
       for(const entry of validResolutions) {
 
-        this.log.info('Mapping resolution: %s.', formatResolution(entry) + ' => ' + formatResolution(validResolutions[0]));
+        this.log.info('Mapping resolution: %s.', formatResolution(entry) + ' => ' + formatResolution(nativeResolution));
       }
     }
 
@@ -121,6 +128,15 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     // We're done.
     return true;
+  }
+
+  // Cleanup our event handlers and any timers we've set when the package camera is removed.
+  public override cleanup(): void {
+
+    clearInterval(this.flashlightTimer);
+    this.flashlightTimer = undefined;
+
+    super.cleanup();
   }
 
   // Configure a light accessory to turn on or off the flashlight.
@@ -204,11 +220,16 @@ export class ProtectCameraPackage extends ProtectCamera {
         return;
       }
 
-      // Activate the flashlight.
-      await activateFlashlight();
+      // Activate the flashlight. If we're unable to, inform HomeKit so it reverts the switch.
+      if(!(await activateFlashlight())) {
+
+        this.log.error('Unable to turn on the flashlight.');
+
+        throw new this.hap.HapStatusError(this.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      }
 
       // Heartbeat the flashlight at regular intervals to keep it on.
-      this.flashlightTimer = setInterval(async () => activateFlashlight(), 20 * 1000);
+      this.flashlightTimer = setInterval(() => void activateFlashlight(), 20 * 1000);
     });
 
     // Initialize the flashlight.
@@ -218,13 +239,13 @@ export class ProtectCameraPackage extends ProtectCamera {
   }
 
   // Return a unique identifier for package cameras based on the parent device's MAC address.
-  public get id(): string {
+  public override get id(): string {
 
     return this.ufp.mac + '.PackageCamera';
   }
 
   // Make our RTSP stream findable.
-  public findRtsp(): Nullable<RtspEntry> {
+  public override findRtsp(): Nullable<RtspEntry> {
 
     const channel = this.ufp.channels.find(x => x.name === 'Package Camera');
 
@@ -246,7 +267,7 @@ export class ProtectCameraPackage extends ProtectCamera {
   }
 
   // Return a recording RTSP configuration for HKSV.
-  public findRecordingRtsp(): Nullable<RtspEntry> {
+  public override findRecordingRtsp(): Nullable<RtspEntry> {
 
     return this.findRtsp();
   }

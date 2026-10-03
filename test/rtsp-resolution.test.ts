@@ -1,88 +1,31 @@
 /* Copyright(C) 2019-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
  *
- * rtsp-resolution.test.ts: Tests for RTSP resolution selection and sorting algorithms from protect-camera.ts.
+ * rtsp-resolution.test.ts: Tests for RTSP resolution selection and sorting in ProtectCameraVideo (protect-camera-video.ts).
  *
- * The resolution selection logic (findRtspEntry) and the sort comparator (sortByResolutions) are tested
- * in isolation by reproducing their algorithms without Homebridge dependencies.
+ * The real ProtectCameraVideo lookups (findRtsp, findRecordingRtsp) and the sortByResolutions comparator are exercised against a minimal fake camera.
  */
-import type { Resolution } from 'homebridge';
+import type { ProtectCamera, RtspEntry } from '../src/devices/protect-camera.js';
+import { ProtectCameraVideo, sortByResolutions } from '../src/devices/protect-camera-video.js';
+import { formatResolution } from '../src/devices/protect-camera.js';
 
-// Minimal RtspEntry type matching what protect-camera.ts uses.
-interface RtspEntry {
+// Create a real video delegate backed by a fake camera carrying only the hints the RTSP lookups consult.
+function makeVideo(hints: { recordingDefault?: string | undefined; streamingDefault?: string | undefined } = {}): ProtectCameraVideo {
 
-  channel: { width: number; height: number; fps: number; name: string; id: number };
-  name: string;
-  resolution: Resolution;
-  url: string;
+  return new ProtectCameraVideo({ hints } as unknown as ProtectCamera);
 }
 
-// Reproduction of sortByResolutions from ProtectCamera (descending order: highest first).
-function sortByResolutions(a: RtspEntry, b: RtspEntry): number {
+// Look up an RTSP entry through the real ProtectCameraVideo.findRtsp(). An explicit default is supplied the same way production does: via the camera's
+// streamingDefault hint.
+function findRtspEntry(rtspEntries: RtspEntry[], width: number, height: number, options?: { biasHigher?: boolean; default?: string }): RtspEntry | null {
 
-  if(a.resolution[0] < b.resolution[0]) {
-    return 1;
-  }
-  if(a.resolution[0] > b.resolution[0]) {
-    return -1;
-  }
-  if(a.resolution[1] < b.resolution[1]) {
-    return 1;
-  }
-  if(a.resolution[1] > b.resolution[1]) {
-    return -1;
-  }
-  if(a.resolution[2] < b.resolution[2]) {
-    return 1;
-  }
-  if(a.resolution[2] > b.resolution[2]) {
-    return -1;
-  }
-
-  return 0;
-}
-
-// Reproduction of findRtspEntry from ProtectCamera.
-function findRtspEntry(
-  rtspEntries: RtspEntry[], width: number, height: number,
-  options?: { biasHigher?: boolean; default?: string },
-): RtspEntry | null {
-
-  if(!rtspEntries.length) {
-
-    return null;
-  }
-
-  // Check for explicit default preference.
-  if(options?.default) {
-
-    const defaultUpper = options.default.toUpperCase();
-
-    return rtspEntries.find(x => x.channel.name.toUpperCase() === defaultUpper) ?? null;
-  }
-
-  // Exact resolution match.
-  const exactRtsp = rtspEntries.find(x => (x.channel.width === width) && (x.channel.height === height));
-
-  if(exactRtsp) {
-
-    return exactRtsp;
-  }
-
-  // Default: bias lower — find first entry smaller than target, or fallback to lowest available.
-  if(!options?.biasHigher) {
-
-    return rtspEntries.find(x => x.channel.width < width) ?? rtspEntries[rtspEntries.length - 1];
-  }
-
-  // Bias higher — find last entry larger than target, or fallback to highest available.
-  return rtspEntries.filter(x => x.channel.width > width).pop() ?? rtspEntries[0];
+  return makeVideo({ streamingDefault: options?.default }).findRtsp(width, height, { biasHigher: options?.biasHigher, rtspEntries: [...rtspEntries] });
 }
 
 // Helper to create an RtspEntry.
 function makeEntry(width: number, height: number, fps: number, name: string): RtspEntry {
 
   return {
-    channel: { width, height, fps, name, id: 0 },
+    channel: { width, height, fps, name, id: 0 } as RtspEntry['channel'],
     name: `${width}x${height}@${fps}fps (${name})`,
     resolution: [width, height, fps],
     url: `rtsps://camera:7441/${name.toLowerCase()}`,
@@ -198,6 +141,14 @@ describe('findRtspEntry', () => {
 
       expect(result?.channel.width).toBe(1280);
     });
+
+    it('requires a strictly narrower entry when the width matches but the height does not', () => {
+
+      // Requesting 1920x1080 against a 4:3 1920x1440 channel - not an exact match, so we drop to the next narrower entry.
+      const result = findRtspEntry([ makeEntry(1920, 1440, 30, 'High'), makeEntry(1280, 960, 30, 'Low') ], 1920, 1080);
+
+      expect(result?.channel.name).toBe('Low');
+    });
   });
 
   describe('bias higher', () => {
@@ -284,26 +235,77 @@ describe('findRtspEntry', () => {
   });
 });
 
-describe('Resolution format helper', () => {
+describe('findRecordingRtsp', () => {
 
-  // Reproduction of getResolution from ProtectCamera.
-  function getResolution(resolution: Resolution): string {
+  const entries = [
+    makeEntry(3840, 2160, 30, 'High'),
+    makeEntry(1920, 1080, 30, 'Medium'),
+    makeEntry(1280, 720, 30, 'Low'),
+  ];
 
-    return resolution[0].toString() + 'x' + resolution[1].toString() + '@' + resolution[2].toString() + 'fps';
+  // findRecordingRtsp() searches the delegate's own published entries, so seed them directly.
+  function makeRecordingVideo(recordingDefault?: string): ProtectCameraVideo {
+
+    const video = makeVideo({ recordingDefault });
+
+    (video as unknown as { rtspEntries: RtspEntry[] }).rtspEntries = [...entries];
+
+    return video;
   }
+
+  it('biases toward the next higher resolution', () => {
+
+    expect(makeRecordingVideo().findRecordingRtsp(1600, 900)?.channel.name).toBe('Medium');
+  });
+
+  it('honors the recording default hint regardless of the requested resolution', () => {
+
+    expect(makeRecordingVideo('low').findRecordingRtsp(3840, 2160)?.channel.name).toBe('Low');
+  });
+
+  it('ignores the streaming default hint', () => {
+
+    const video = new ProtectCameraVideo({ hints: { streamingDefault: 'Low' } } as unknown as ProtectCamera);
+
+    (video as unknown as { rtspEntries: RtspEntry[] }).rtspEntries = [...entries];
+
+    expect(video.findRecordingRtsp(3840, 2160)?.channel.name).toBe('High');
+  });
+});
+
+describe('findRtsp maxPixels constraint', () => {
+
+  const entries = [
+    makeEntry(3840, 2160, 30, 'High'),
+    makeEntry(1920, 1080, 30, 'Medium'),
+    makeEntry(1280, 720, 30, 'Low'),
+  ];
+
+  it('filters out entries exceeding the pixel budget before selecting', () => {
+
+    expect(makeVideo().findRtsp(3840, 2160, { maxPixels: 1920 * 1080, rtspEntries: [...entries] })?.channel.name).toBe('Medium');
+  });
+
+  it('returns null when no entry fits the pixel budget', () => {
+
+    expect(makeVideo().findRtsp(1920, 1080, { maxPixels: 100, rtspEntries: [...entries] })).toBeNull();
+  });
+});
+
+describe('formatResolution', () => {
 
   it('formats a standard resolution', () => {
 
-    expect(getResolution([1920, 1080, 30])).toBe('1920x1080@30fps');
+    expect(formatResolution([1920, 1080, 30])).toBe('1920x1080@30fps');
   });
 
   it('formats a 4K resolution', () => {
 
-    expect(getResolution([3840, 2160, 24])).toBe('3840x2160@24fps');
+    expect(formatResolution([3840, 2160, 24])).toBe('3840x2160@24fps');
   });
 
   it('formats a low resolution', () => {
 
-    expect(getResolution([320, 180, 15])).toBe('320x180@15fps');
+    expect(formatResolution([320, 180, 15])).toBe('320x180@15fps');
   });
 });

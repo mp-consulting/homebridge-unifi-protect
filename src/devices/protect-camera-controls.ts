@@ -7,7 +7,6 @@ import type { CharacteristicValue, HAP } from 'homebridge';
 import { acquireService, validService } from '../lib/index.js';
 import { PROTECT_HOMEKIT_UPDATE_DELAY } from '../settings.js';
 import type { ProtectCamera } from './protect-camera.js';
-import type { ProtectCameraConfig } from '../unifi/index.js';
 import { ProtectReservedNames } from '../protect-types.js';
 import { toCamelCase } from '../protect-utils.js';
 
@@ -122,7 +121,7 @@ export class ProtectCameraControls {
 
       // Turn the status light on or off.
       statusLight?.onGet(() => this.camera.statusLed);
-      statusLight?.onSet(async (value: CharacteristicValue) => this.camera.setStatusLed(!!value));
+      statusLight?.onSet(async (value: CharacteristicValue) => this.camera.writeStatusLed(!!value));
 
       // Initialize the status light state.
       service?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.camera.statusLed);
@@ -142,21 +141,9 @@ export class ProtectCameraControls {
       service?.getCharacteristic(this.hap.Characteristic.NightVision)?.onGet(() => this.nightVision);
       service?.getCharacteristic(this.hap.Characteristic.NightVision)?.onSet(async (value: CharacteristicValue) => {
 
-        // Update the night vision setting in Protect.
-        const newUfp = await this.camera.nvr.ufpApi.updateDevice(this.camera.ufp, { ispSettings: { irLedMode: value ? 'auto' : 'off' } });
-
-        if(!newUfp) {
-
-          this.camera.log.error('Unable to set night vision to %s. Please ensure this username has the Administrator role in UniFi Protect.',
-            value ? 'auto' : 'off');
-
-          setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.NightVision, !value), PROTECT_HOMEKIT_UPDATE_DELAY);
-
-          return;
-        }
-
-        // Update our internal view of the device configuration.
-        this.camera.ufp = newUfp;
+        // Update the night vision setting in Protect. If this fails, HomeKit is informed and reverts the characteristic.
+        await this.camera.writeDevice({ ispSettings: { irLedMode: value ? 'auto' : 'off' } },
+          'Unable to set night vision to %s. Please ensure this username has the Administrator role in UniFi Protect.', value ? 'auto' : 'off');
       });
 
       // Initialize the status light state.
@@ -221,21 +208,9 @@ export class ProtectCameraControls {
           break;
       }
 
-      // Update the night vision setting in Protect.
-      const newUfp = await this.camera.nvr.ufpApi.updateDevice(this.camera.ufp, { ispSettings: { irLedMode: value ? mode : 'off' } });
-
-      if(!newUfp) {
-
-        this.camera.log.error('Unable to set night vision to %s. Please ensure this username has the Administrator role in UniFi Protect.',
-          value ? mode : 'off');
-
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, !value), PROTECT_HOMEKIT_UPDATE_DELAY);
-
-        return;
-      }
-
-      // Update our internal view of the device configuration.
-      this.camera.ufp = newUfp;
+      // Update the night vision setting in Protect. If this fails, HomeKit is informed and reverts the characteristic.
+      await this.camera.writeDevice({ ispSettings: { irLedMode: value ? mode : 'off' } },
+        'Unable to set night vision to %s. Please ensure this username has the Administrator role in UniFi Protect.', value ? mode : 'off');
     });
 
     // Adjust the sensitivity of night vision.
@@ -284,17 +259,7 @@ export class ProtectCameraControls {
         level = (level * 7) + 20;
       }
 
-      const newUfp = await this.camera.nvr.ufpApi.updateDevice(this.camera.ufp, nightvision);
-
-      if(!newUfp) {
-
-        this.camera.log.error('Unable to adjust night vision settings. Please ensure this username has the Administrator role in UniFi Protect.');
-
-        return;
-      }
-
-      // Set the context to our updated device configuration.
-      this.camera.ufp = newUfp;
+      await this.camera.writeDevice(nightvision, 'Unable to adjust night vision settings. Please ensure this username has the Administrator role in UniFi Protect.');
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
       setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, level), PROTECT_HOMEKIT_UPDATE_DELAY);
@@ -352,21 +317,9 @@ export class ProtectCameraControls {
           return;
         }
 
-        // Set our recording mode.
-        this.camera.ufp.recordingSettings.mode = ufpRecordingSetting;
-
-        // Tell Protect about it.
-        const newDevice = await this.camera.nvr.ufpApi.updateDevice(this.camera.ufp, { recordingSettings: this.camera.ufp.recordingSettings });
-
-        if(!newDevice) {
-
-          this.camera.log.error('Unable to set the UniFi Protect recording mode to %s.', ufpRecordingSetting);
-
-          return false;
-        }
-
-        // Save our updated device context.
-        this.camera.ufp = newDevice;
+        // Tell Protect about our new recording mode. We only update our view of the device once Protect has accepted the change.
+        await this.camera.writeDevice({ recordingSettings: { ...this.camera.ufp.recordingSettings, mode: ufpRecordingSetting } },
+          'Unable to set the UniFi Protect recording mode to %s.', ufpRecordingSetting);
 
         // Update all the other recording switches.
         for(const otherUfpSwitch of UFP_RECORDING_SWITCHES) {
@@ -452,12 +405,12 @@ export class ProtectCameraControls {
       const response = await this.camera.nvr.ufpApi.retrieve(
         this.camera.nvr.ufpApi.getApiEndpoint(this.camera.ufp.modelKey) + '/' + this.camera.ufp.id + '/unlock', { method: 'POST' });
 
+      // Something went wrong. Inform HomeKit so it reverts to our prior state.
       if(!this.camera.nvr.ufpApi.responseOk(response?.statusCode)) {
 
-        // Something went wrong, revert to our prior state.
-        revertLock();
+        this.camera.log.error('Unable to unlock. Please ensure this username has the Administrator role in UniFi Protect.');
 
-        return;
+        throw new this.hap.HapStatusError(this.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
       }
     });
 
@@ -470,7 +423,7 @@ export class ProtectCameraControls {
   // Return the current night vision state of a camera.
   private get nightVision(): boolean {
 
-    return (this.camera.ufp as ProtectCameraConfig).ispSettings.irLedMode !== 'off';
+    return (this.camera.ufp).ispSettings.irLedMode !== 'off';
   }
 
   // Return the current night vision brightness.

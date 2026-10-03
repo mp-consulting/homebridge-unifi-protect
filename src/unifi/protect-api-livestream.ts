@@ -90,6 +90,9 @@ export interface LivestreamOptions {
   useStream: boolean;
 }
 
+// Options accepted when starting a livestream. Any option that is omitted, or explicitly undefined, falls back to its default.
+export type LivestreamStartOptions = { [K in keyof LivestreamOptions]?: LivestreamOptions[K] | undefined };
+
 /**
  * This class provides a complete event-driven API to access the UniFi Protect Livestream API endpoint.
  *
@@ -130,7 +133,7 @@ export class ProtectLivestream extends EventEmitter {
   private _stream: Nullable<Readable>;
   private api: ProtectApi;
   private heartbeat: Nullable<NodeJS.Timeout>;
-  private initSegmentPromise?: Promise<Buffer>;
+  private initSegmentPromise?: Promise<Buffer> | undefined;
   private lastMessage: number;
   private log: ProtectLogging;
   private sessionAbort: Nullable<AbortController>;
@@ -182,7 +185,7 @@ export class ProtectLivestream extends EventEmitter {
    * | `segment`     | A non-initialization fMP4 segment has been received. The segment will be passed as an argument to any listeners.                 |
    * | `timestamps`  | An array of numbers containing the decode timestamps of the frames in the next segment. It mirrors the `tfdt` box contents.      |
    */
-  public async start(cameraId: string, channel: number, options: Partial<LivestreamOptions> = {}): Promise<boolean> {
+  public async start(cameraId: string, channel: number, options: LivestreamStartOptions = {}): Promise<boolean> {
 
     options.chunkSize ??= 4096;
     options.emitTimestamps ??= false;
@@ -322,7 +325,7 @@ export class ProtectLivestream extends EventEmitter {
 
       // Open the livestream WebSocket. Certificate validation follows the API's verifyTls setting, which defaults to off since Protect controllers ship with
       // self-signed certificates.
-      this.ws = new WebSocketClient(wsUrl, { rejectUnauthorized: this.api.verifyTls });
+      this.ws = new WebSocketClient(wsUrl, { agent: this.api.tlsAgent, rejectUnauthorized: this.api.verifyTls });
 
       // The user's requested that we use a stream interface instead of an event interface to push complete fMP4 segments.
       if(options.useStream) {
@@ -492,14 +495,10 @@ export class ProtectLivestream extends EventEmitter {
 
             break;
 
-          // End of segment. Concatenate all accumulated chunks for each box type and build the complete segment.
+          // End of segment. Build the complete segment with a single concatenation across all accumulated chunks so each segment is copied exactly once.
           case ProtectLiveFrame.ENDSEGMENT: {
 
-            const moof = Buffer.concat(currentSegment.moof);
-            const mdat = Buffer.concat(currentSegment.mdat);
-            const video = Buffer.concat(currentSegment.video);
-            const audio = Buffer.concat(currentSegment.audio);
-            const completeSegment = Buffer.concat([ moof, mdat, video, audio ]);
+            const completeSegment = Buffer.concat([ ...currentSegment.moof, ...currentSegment.mdat, ...currentSegment.video, ...currentSegment.audio ]);
 
             if(this._stream) {
 
@@ -508,8 +507,17 @@ export class ProtectLivestream extends EventEmitter {
 
               this.emit('segment', completeSegment);
               this.emit('message', completeSegment);
-              this.emit('moof', moof);
-              this.emit('mdat', mdat);
+
+              // The standalone moof and mdat events require their own copies, so we only build them when someone is actually listening.
+              if(this.listenerCount('moof') > 0) {
+
+                this.emit('moof', Buffer.concat(currentSegment.moof));
+              }
+
+              if(this.listenerCount('mdat') > 0) {
+
+                this.emit('mdat', Buffer.concat(currentSegment.mdat));
+              }
             }
 
             break;

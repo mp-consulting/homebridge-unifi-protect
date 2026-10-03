@@ -47,9 +47,9 @@ function decodeClientFrames(buffer: Buffer): { isMasked: boolean; opcode: number
 
   while((offset + 2) <= buffer.length) {
 
-    const opcode = buffer[offset] & 0x0F;
-    const isMasked = !!(buffer[offset + 1] & 0x80);
-    let length = buffer[offset + 1] & 0x7F;
+    const opcode = buffer.readUInt8(offset) & 0x0F;
+    const isMasked = !!(buffer.readUInt8(offset + 1) & 0x80);
+    let length = buffer.readUInt8(offset + 1) & 0x7F;
     let position = offset + 2;
 
     if(length === 126) {
@@ -81,7 +81,7 @@ function decodeClientFrames(buffer: Buffer): { isMasked: boolean; opcode: number
 
       for(let index = 0; index < payload.length; index++) {
 
-        payload[index] ^= mask[index % 4];
+        payload[index] = payload.readUInt8(index) ^ mask.readUInt8(index % 4);
       }
     }
 
@@ -114,7 +114,10 @@ describe('WebSocketClient', () => {
       res.end();
     });
 
-    server.on('upgrade', (req, socket) => {
+    server.on('upgrade', (req, upgradeSocket) => {
+
+      // Node types the upgraded connection as a Duplex, but for a plain HTTP server it is always a net.Socket.
+      const socket = upgradeSocket as Socket;
 
       lastRequestHeaders = req.headers;
       serverSockets.push(socket);

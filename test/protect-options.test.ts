@@ -82,7 +82,7 @@ describe('Feature Options', () => {
 
       expect(featureOptions).toHaveProperty(category.name);
       expect(Array.isArray(featureOptions[category.name])).toBe(true);
-      expect(featureOptions[category.name].length).toBeGreaterThan(0);
+      expect(featureOptions[category.name]?.length).toBeGreaterThan(0);
     }
   });
 
@@ -204,7 +204,7 @@ describe('Feature Options', () => {
     it('should have a base device option with an empty name (category-level toggle)', () => {
 
       const deviceOptions = featureOptions.Device;
-      const baseOption = deviceOptions.find(e => e.name === '');
+      const baseOption = deviceOptions?.find(e => e.name === '');
 
       expect(baseOption).toBeDefined();
       expect(baseOption!.default).toBe(true);
@@ -213,7 +213,7 @@ describe('Feature Options', () => {
     it('should have a base audio option with an empty name', () => {
 
       const audioOptions = featureOptions.Audio;
-      const baseOption = audioOptions.find(e => e.name === '');
+      const baseOption = audioOptions?.find(e => e.name === '');
 
       expect(baseOption).toBeDefined();
       expect(baseOption!.default).toBe(true);
@@ -222,7 +222,7 @@ describe('Feature Options', () => {
     it('should have motion duration with a numeric default value', () => {
 
       const motionOptions = featureOptions.Motion;
-      const durationOption = motionOptions.find(e => e.name === 'Duration');
+      const durationOption = motionOptions?.find(e => e.name === 'Duration');
 
       expect(durationOption).toBeDefined();
       expect(typeof durationOption!.defaultValue).toBe('number');
@@ -232,7 +232,7 @@ describe('Feature Options', () => {
     it('should have occupancy sensor duration with a numeric default value', () => {
 
       const motionOptions = featureOptions.Motion;
-      const durationOption = motionOptions.find(e => e.name === 'OccupancySensor.Duration');
+      const durationOption = motionOptions?.find(e => e.name === 'OccupancySensor.Duration');
 
       expect(durationOption).toBeDefined();
       expect(typeof durationOption!.defaultValue).toBe('number');
@@ -243,8 +243,8 @@ describe('Feature Options', () => {
 
       const motionOptions = featureOptions.Motion;
 
-      expect(motionOptions.find(e => e.name === 'SmartDetect')).toBeDefined();
-      expect(motionOptions.find(e => e.name === 'SmartDetect.ObjectSensors')).toBeDefined();
+      expect(motionOptions?.find(e => e.name === 'SmartDetect')).toBeDefined();
+      expect(motionOptions?.find(e => e.name === 'SmartDetect.ObjectSensors')).toBeDefined();
     });
 
     it('should have HKSV recording options under Video.HKSV category', () => {
@@ -252,7 +252,7 @@ describe('Feature Options', () => {
       const hksvOptions = featureOptions['Video.HKSV'];
 
       expect(hksvOptions).toBeDefined();
-      expect(hksvOptions.find(e => e.name === 'Recording.Switch')).toBeDefined();
+      expect(hksvOptions?.find(e => e.name === 'Recording.Switch')).toBeDefined();
     });
   });
 });
@@ -326,8 +326,8 @@ describe('ProtectOptions type interface', () => {
     };
 
     expect(nvrConfig.doorbellMessages).toHaveLength(2);
-    expect(nvrConfig.doorbellMessages![0].message).toBe('Welcome');
-    expect(nvrConfig.doorbellMessages![0].duration).toBe(60000);
+    expect(nvrConfig.doorbellMessages![0]?.message).toBe('Welcome');
+    expect(nvrConfig.doorbellMessages![0]?.duration).toBe(60000);
     expect(nvrConfig.mqttUrl).toBe('mqtt://localhost:1883');
     expect(nvrConfig.name).toBe('My NVR');
     expect(nvrConfig.overrideAddress).toBe('10.0.0.1');
@@ -360,8 +360,8 @@ describe('ProtectOptions type interface', () => {
     };
 
     expect(config.controllers).toHaveLength(2);
-    expect(config.controllers[0].address).toBe('192.168.1.1');
-    expect(config.controllers[1].name).toBe('Secondary NVR');
+    expect(config.controllers[0]?.address).toBe('192.168.1.1');
+    expect(config.controllers[1]?.name).toBe('Secondary NVR');
     expect(config.options).toContain('Enable.Device');
     expect(config.ringDelay).toBe(5);
   });

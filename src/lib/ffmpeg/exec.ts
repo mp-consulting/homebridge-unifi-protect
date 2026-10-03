@@ -205,7 +205,7 @@ export class FfmpegExec extends FfmpegProcess {
    * @param exitCode         - The exit code returned by the FFmpeg process.
    * @param signal           - The signal used to terminate the process, if any.
    */
-  protected logFfmpegError(exitCode: Nullable<number>, signal: Nullable<NodeJS.Signals>): void {
+  protected override logFfmpegError(exitCode: Nullable<number>, signal: Nullable<NodeJS.Signals>): void {
 
     // If we're ignoring errors, we're done.
     if(!this.isLoggingErrors) {

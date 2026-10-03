@@ -13,6 +13,7 @@ export interface RequestOptions {
   agent?: https.Agent;
   body?: string | Buffer;
   headers?: Record<string, string | undefined>;
+  maxResponseSize?: number;
   method?: string;
   retry?: RetryOptions;
   signal?: AbortSignal;
@@ -41,6 +42,10 @@ export interface RequestResponse {
   statusCode: number;
 }
 
+// Default cap, in bytes, on the size of a response body we're willing to buffer. This guards against a broken or hostile endpoint streaming an unbounded
+// response into memory, while comfortably exceeding anything the UniFi APIs legitimately return.
+const DEFAULT_MAX_RESPONSE_SIZE = 64 * 1024 * 1024;
+
 // Status codes we consider transient by default when retrying.
 const DEFAULT_RETRY_STATUS_CODES = [ 429, 500, 502, 503, 504 ];
 
@@ -60,8 +65,34 @@ function requestOnce(url: string, options: RequestOptions): Promise<RequestRespo
     }, (res) => {
 
       const chunks: Buffer[] = [];
+      const maxResponseSize = options.maxResponseSize ?? DEFAULT_MAX_RESPONSE_SIZE;
+      let size = 0;
 
-      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      let isOversized = false;
+
+      res.on('data', (chunk: Buffer) => {
+
+        if(isOversized) {
+
+          return;
+        }
+
+        size += chunk.length;
+
+        if(size > maxResponseSize) {
+
+          // Reject, then tear the connection down. We deliberately don't hand the error to destroy() - that would re-emit it on the underlying socket, where
+          // nobody may be listening for it once the response has started.
+          isOversized = true;
+          chunks.length = 0;
+          reject(new Error('Response exceeds the maximum allowed size of ' + maxResponseSize + ' bytes.'));
+          req.destroy();
+
+          return;
+        }
+
+        chunks.push(chunk);
+      });
 
       res.on('end', () => {
 

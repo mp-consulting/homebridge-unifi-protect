@@ -76,6 +76,13 @@ export const PROTECT_LIVESTREAM_OFFLINE_RETRY_INTERVAL = 60000;
 // Protect fMP4 segment resolution, in milliseconds. This defines the resolution of our buffer. It should never be less than 100ms or greater than 1500ms.
 export const PROTECT_SEGMENT_RESOLUTION = 100;
 
+// Maximum number of fMP4 segments we queue for an FFmpeg process that isn't keeping up, before we start discarding the oldest ones. This is thirty seconds
+// of video at our segment resolution, comfortably beyond any HKSV prebuffer, and bounds memory use when FFmpeg stalls.
+export const PROTECT_SEGMENT_QUEUE_MAXLENGTH = (30 * 1000) / PROTECT_SEGMENT_RESOLUTION;
+
+// Time, in milliseconds, we wait for a livestream's fMP4 initialization segment before giving up on it.
+export const PROTECT_LIVESTREAM_INIT_SEGMENT_TIMEOUT = 2000;
+
 // HomeKit Secure Video communication timeout threshold, in milliseconds. HKSV has a strict 5 second threshold for communication, so we set this a
 // little below that.
 export const PROTECT_HKSV_TIMEOUT = 4500;
@@ -100,6 +107,13 @@ export const PROTECT_RPI_GPU_MINIMUM = 128;
 
 // Maximum age of a snapshot in seconds.
 export const PROTECT_SNAPSHOT_CACHE_MAXAGE = 90;
+
+// Freshness window, in seconds, during which a cached snapshot is served directly instead of generating a new one. HomeKit routinely requests the same image
+// from several controllers within moments of each other, and each fresh snapshot spawns FFmpeg. A motion or doorbell ring event always invalidates this.
+export const PROTECT_SNAPSHOT_CACHE_FRESHNESS = 5;
+
+// Maximum size, in bytes, of a snapshot retrieved from a user-configured snapshot URL override.
+export const PROTECT_SNAPSHOT_URL_MAXSIZE = 10 * 1024 * 1024;
 
 // Snapshot retrieval timeout, in milliseconds. HomeKit has a strict 5 second threshold for communication, so we set this just below that.
 export const PROTECT_SNAPSHOT_TIMEOUT = 4990;
@@ -134,3 +148,6 @@ export const HOMEKIT_AMBIENT_LIGHT_MINIMUM = 0.0001;
 // Plugin logo URL for M3U playlist guide information.
 export const PROTECT_PLAYLIST_LOGO_URL =
   'https://raw.githubusercontent.com/mp-consulting/homebridge-unifi-protect/main/docs/media/homebridge-unifi-protect-4x3.png';
+
+// Name of the file, in the Homebridge storage path, where we persist the trust-on-first-use TLS certificate fingerprints of our Protect controllers.
+export const PROTECT_TLS_PIN_FILE = 'unifi-protect-tls-pins.json';

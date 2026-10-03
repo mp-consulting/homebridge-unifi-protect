@@ -16,6 +16,31 @@ export default tseslint.config(
       sourceType: 'module',
     },
   },
+  // Type-aware linting for the plugin and test sources. The project service resolves src/** through tsconfig.json and test/** through test/tsconfig.json
+  // (which extends tsconfig.test.json). The homebridge-ui JavaScript remains untyped.
+  {
+    files: ['src/**/*.ts', 'test/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      '@typescript-eslint/await-thenable': 'error',
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'error',
+      '@typescript-eslint/switch-exhaustiveness-check': ['error', { considerDefaultExhaustiveForUnions: true }],
+    },
+  },
+  // Shared library files are kept byte-identical with a sibling repository, so type-aware findings in them are addressed upstream rather than here.
+  {
+    files: ['src/lib/{featureoptions,mqtt-connection,mqttclient,request,service,ui-server,util,websocket}.ts'],
+    rules: {
+      '@typescript-eslint/no-unnecessary-type-assertion': 'off',
+    },
+  },
   // Core rules
   {
     rules: {
@@ -52,6 +77,17 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-use-before-define': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
+  // Node.js development scripts
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        setInterval: 'readonly',
+      },
     },
   },
   // homebridge-ui browser globals

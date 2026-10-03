@@ -1,39 +1,10 @@
 /* Copyright(C) 2017-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
  *
- * deep-merge.test.ts: Tests for the deep merge algorithm used by updateUfp in protect-events.ts.
- *
- * The merge logic is tested in isolation by reproducing the algorithm from protect-events.ts
- * without requiring Homebridge dependencies.
+ * deep-merge.test.ts: Tests for mergeJson (protect-utils.ts), the deep merge used by ProtectEvents.updateUfp to apply Protect update payloads.
  */
+import { mergeJson } from '../src/protect-utils.js';
 
-// Reproduction of the mergeJson algorithm from ProtectEvents.updateUfp.
-function mergeJson(...objects: Record<string, unknown>[]): Record<string, unknown> {
-
-  const result = {} as Record<string, unknown>;
-  const isObject = (value: unknown): value is Record<string, unknown> => (typeof value === 'object') && !Array.isArray(value) && (value !== null);
-
-  for(const object of objects) {
-
-    for(const key of Object.keys(object).filter(key => Object.hasOwn(object, key))) {
-
-      const existingValue = result[key];
-      const newValue = object[key];
-
-      if(isObject(existingValue) && isObject(newValue)) {
-
-        result[key] = mergeJson(existingValue, newValue);
-
-        continue;
-      }
-
-      result[key] = newValue;
-    }
-  }
-
-  return result;
-}
-
-describe('Deep Merge (updateUfp algorithm)', () => {
+describe('mergeJson', () => {
 
   it('merges flat objects', () => {
 
@@ -181,8 +152,8 @@ describe('Deep Merge (updateUfp algorithm)', () => {
     };
 
     const result = mergeJson(
-      cameraConfig as unknown as Record<string, unknown>,
-      updatePayload as unknown as Record<string, unknown>,
+      cameraConfig,
+      updatePayload,
     );
 
     // Nested objects should be deep-merged.
@@ -209,8 +180,8 @@ describe('Deep Merge (updateUfp algorithm)', () => {
     };
 
     const result = mergeJson(
-      nvrConfig as unknown as Record<string, unknown>,
-      updatePayload as unknown as Record<string, unknown>,
+      nvrConfig,
+      updatePayload,
     );
 
     expect(result.ports).toEqual({ rtsp: 7448, rtsps: 7441, ump: 7442 });

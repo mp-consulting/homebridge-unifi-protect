@@ -303,7 +303,7 @@ export class FfmpegCodecs {
       const versionMatch = versionRegex.exec(stdout);
 
       // If we have a version string, let's save it. Otherwise, we're blind.
-      this._ffmpegVersion = versionMatch ? versionMatch[1] : 'unknown';
+      this._ffmpegVersion = versionMatch?.[1] ?? 'unknown';
 
       this.log.info('Using FFmpeg version: %s.', this.ffmpegVersion);
     });
@@ -381,24 +381,24 @@ export class FfmpegCodecs {
         const encodersMatch = encodersRegex.exec(codecLine);
 
         // If we found decoders, add them to our list of supported decoders for this format.
-        if(decodersMatch) {
+        if((decodersMatch?.[1] !== undefined) && (decodersMatch[2] !== undefined)) {
 
-          this.ffmpegCodecs[decodersMatch[1]] ??= { decoders: new Set(), encoders: new Set() };
+          const codecEntry = this.ffmpegCodecs[decodersMatch[1]] ??= { decoders: new Set(), encoders: new Set() };
 
           for(const decoder of decodersMatch[2].split(' ')) {
 
-            this.ffmpegCodecs[decodersMatch[1]].decoders.add(decoder.toLowerCase());
+            codecEntry.decoders.add(decoder.toLowerCase());
           }
         }
 
         // If we found encoders, add them to our list of supported encoders for this format.
-        if(encodersMatch) {
+        if((encodersMatch?.[1] !== undefined) && (encodersMatch[2] !== undefined)) {
 
-          this.ffmpegCodecs[encodersMatch[1]] ??= { decoders: new Set(), encoders: new Set() };
+          const codecEntry = this.ffmpegCodecs[encodersMatch[1]] ??= { decoders: new Set(), encoders: new Set() };
 
           for(const encoder of encodersMatch[2].split(' ')) {
 
-            this.ffmpegCodecs[encodersMatch[1]].encoders.add(encoder.toLowerCase());
+            codecEntry.encoders.add(encoder.toLowerCase());
           }
         }
       }

@@ -114,7 +114,7 @@ All generally available UniFi Protect hardware is supported:
 | `npm test` | Run the test suite (Vitest) |
 | `npm run test:watch` | Run tests in watch mode |
 | `npm run test:coverage` | Run tests with coverage report |
-| `npm run watch` | Build, link, and watch for changes (nodemon) |
+| `npm run watch` | Build, link, and rerun Homebridge when src/ or homebridge-ui/ change |
 | `npm run start` | Build and launch Homebridge with a test config |
 | `npm run monitor:events` | Run the event schema monitor script |
 

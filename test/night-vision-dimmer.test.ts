@@ -1,287 +1,213 @@
 /* Copyright(C) 2019-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
  *
- * night-vision-dimmer.test.ts: Tests for night vision dimmer brightness snapping and custom range interpolation
- * from protect-camera-controls.ts.
+ * night-vision-dimmer.test.ts: Tests for the night vision dimmer and night vision characteristics in ProtectCameraControls (protect-camera-controls.ts).
  *
- * The dimmer maps HomeKit brightness (0-100) to Protect night vision modes. Fixed thresholds snap to named modes,
- * while the 20-90 range interpolates to icrCustomValue (0-10) for fine-grained control.
+ * The dimmer maps HomeKit brightness (0-100) to Protect night vision modes. Fixed thresholds snap to named modes, while the 20-90 range interpolates to
+ * icrCustomValue (0-10) for fine-grained control. These tests drive the real ProtectCameraControls through HAP characteristics on a fake camera.
  */
+import * as hap from '@homebridge/hap-nodejs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PlatformAccessory } from 'homebridge';
+import { PROTECT_HOMEKIT_UPDATE_DELAY } from '../src/settings.js';
+import type { ProtectCamera } from '../src/devices/protect-camera.js';
+import { ProtectCameraControls } from '../src/devices/protect-camera-controls.js';
+import { ProtectReservedNames } from '../src/protect-types.js';
 
-// Reproduction of the brightness snapping logic from the dimmer's onSet handler.
-function snapBrightness(level: number): number {
+// The pieces of our fake camera that tests inspect.
+interface FakeCamera {
 
-  if(level < 5) {
+  accessory: PlatformAccessory;
+  log: { error: ReturnType<typeof vi.fn>; info: ReturnType<typeof vi.fn> };
+  ufp: { ispSettings: { icrCustomValue: number; irLedMode: string } };
+  writeDevice: ReturnType<typeof vi.fn>;
+}
 
-    level = 0;
-  } else if(level < 10) {
+// Build a fake camera with the night vision dimmer enabled and configure the real controls delegate against it.
+function makeControls(irLedMode = 'auto', icrCustomValue = 0): { camera: FakeCamera; dimmer: hap.Service } {
 
-    level = 5;
-  } else if(level < 20) {
+  const accessory = new hap.Accessory('Camera', hap.uuid.generate('night-vision-' + irLedMode + icrCustomValue.toString()));
 
-    level = 10;
-  } else if(level > 90) {
+  const camera = {
 
-    level = 100;
+    accessory,
+    accessoryName: 'Camera',
+    api: { hap },
+    hasFeature: (): boolean => false,
+    hints: { ledStatus: false, nightVision: false, nightVisionDimmer: true, nvrRecordingSwitch: false },
+    isHksvCapable: true,
+    log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+    ufp: { ispSettings: { icrCustomValue, irLedMode }, recordingSettings: { mode: 'always' } },
+    writeDevice: vi.fn(async (): Promise<boolean> => true),
+  };
+
+  new ProtectCameraControls(camera as unknown as ProtectCamera).configure();
+
+  const dimmer = accessory.getServiceById(hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_NIGHTVISION);
+
+  if(!dimmer) {
+
+    throw new Error('Night vision dimmer was not created.');
   }
 
-  return level;
+  return { camera: camera as unknown as FakeCamera, dimmer };
 }
 
-// Reproduction of NIGHT_VISION_BRIGHTNESS_MAP from protect-camera-controls.ts.
-const NIGHT_VISION_BRIGHTNESS_MAP = new Map<number, string>([
+// Set the dimmer brightness through HomeKit and return what was written to Protect along with the brightness HomeKit is updated to afterwards.
+async function setBrightness(value: number, irLedMode = 'auto'): Promise<{ brightness: unknown; written: unknown }> {
 
-  [0, 'off'],
-  [5, 'autoFilterOnly'],
-  [10, 'auto'],
-  [100, 'on'],
-]);
+  const { camera, dimmer } = makeControls(irLedMode);
 
-// Reproduction of the custom range mapping: brightness (20-90) → icrCustomValue (0-10) → quantized brightness.
-function brightnessToIcr(level: number): number {
+  await dimmer.getCharacteristic(hap.Characteristic.Brightness).handleSetRequest(value);
+  vi.advanceTimersByTime(PROTECT_HOMEKIT_UPDATE_DELAY);
 
-  return Math.round((level - 20) / 7);
-}
-
-function icrToBrightness(icr: number): number {
-
-  return (icr * 7) + 20;
-}
-
-// Reproduction of the nightVision getter from protect-camera-controls.ts.
-function isNightVisionOn(irLedMode: string): boolean {
-
-  return irLedMode !== 'off';
-}
-
-// Reproduction of the nightVisionBrightness getter.
-const NIGHT_VISION_MAP = new Map<string, number>([
-
-  ['off', 0],
-  ['autoFilterOnly', 5],
-  ['auto', 10],
-  ['on', 100],
-]);
-
-function nightVisionBrightness(irLedMode: string, icrCustomValue: number): number {
-
-  const brightness = NIGHT_VISION_MAP.get(irLedMode);
-
-  if(brightness !== undefined) {
-
-    return brightness;
-  }
-
-  if((irLedMode === 'custom') || (irLedMode === 'customFilterOnly')) {
-
-    return (icrCustomValue * 7) + 20;
-  }
-
-  return 0;
+  return { brightness: dimmer.getCharacteristic(hap.Characteristic.Brightness).value, written: camera.writeDevice.mock.calls[0]?.[0] };
 }
 
 describe('Night Vision Dimmer - Brightness Snapping', () => {
 
+  beforeEach(() => {
+
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+
+    vi.useRealTimers();
+  });
+
   describe('fixed thresholds', () => {
 
-    it('snaps 0 to 0 (off)', () => {
+    it.each([
+      [ 0, 0, 'off' ],
+      [ 4, 0, 'off' ],
+      [ 5, 5, 'autoFilterOnly' ],
+      [ 9, 5, 'autoFilterOnly' ],
+      [ 10, 10, 'auto' ],
+      [ 19, 10, 'auto' ],
+      [ 91, 100, 'on' ],
+      [ 100, 100, 'on' ],
+    ])('snaps %i to %i (%s)', async (input, snapped, mode) => {
 
-      expect(snapBrightness(0)).toBe(0);
-    });
+      const { brightness, written } = await setBrightness(input);
 
-    it('snaps 4 to 0 (off)', () => {
-
-      expect(snapBrightness(4)).toBe(0);
-    });
-
-    it('snaps 5 to 5 (autoFilterOnly)', () => {
-
-      expect(snapBrightness(5)).toBe(5);
-    });
-
-    it('snaps 9 to 5 (autoFilterOnly)', () => {
-
-      expect(snapBrightness(9)).toBe(5);
-    });
-
-    it('snaps 10 to 10 (auto)', () => {
-
-      expect(snapBrightness(10)).toBe(10);
-    });
-
-    it('snaps 19 to 10 (auto)', () => {
-
-      expect(snapBrightness(19)).toBe(10);
-    });
-
-    it('snaps 91 to 100 (on)', () => {
-
-      expect(snapBrightness(91)).toBe(100);
-    });
-
-    it('snaps 100 to 100 (on)', () => {
-
-      expect(snapBrightness(100)).toBe(100);
+      expect(written).toEqual({ ispSettings: { irLedMode: mode } });
+      expect(brightness).toBe(snapped);
     });
   });
 
-  describe('custom range pass-through (20-90)', () => {
+  describe('custom range interpolation (20-90)', () => {
 
-    it('passes through 20 unchanged', () => {
+    it.each([
+      [ 20, 0, 20 ],
+      [ 27, 1, 27 ],
+      [ 50, 4, 48 ],
+      [ 55, 5, 55 ],
+      [ 90, 10, 90 ],
+    ])('maps brightness %i to icrCustomValue %i and reports %i back to HomeKit', async (input, icr, quantized) => {
 
-      expect(snapBrightness(20)).toBe(20);
+      const { brightness, written } = await setBrightness(input);
+
+      expect(written).toEqual({ ispSettings: { icrCustomValue: icr, irLedMode: 'custom' } });
+      expect(brightness).toBe(quantized);
     });
 
-    it('passes through 50 unchanged', () => {
+    it('uses customFilterOnly when the camera is currently in a filter-only mode', async () => {
 
-      expect(snapBrightness(50)).toBe(50);
+      const { written } = await setBrightness(55, 'autoFilterOnly');
+
+      expect(written).toEqual({ ispSettings: { icrCustomValue: 5, irLedMode: 'customFilterOnly' } });
     });
 
-    it('passes through 90 unchanged', () => {
+    it('every value in 20-90 settles on a brightness that round-trips to the same icrCustomValue', async () => {
 
-      expect(snapBrightness(90)).toBe(90);
-    });
-  });
+      for(let input = 20; input <= 90; input++) {
 
-  describe('all snapped values map to a known mode or custom range', () => {
+        const first = await setBrightness(input);
+        const second = await setBrightness(first.brightness as number);
 
-    it('every integer 0-100 snaps to a value the BRIGHTNESS_MAP knows or to 20-90', () => {
-
-      for(let i = 0; i <= 100; i++) {
-
-        const snapped = snapBrightness(i);
-
-        // Must be either a fixed mode or in the custom range [20, 90].
-        expect(NIGHT_VISION_BRIGHTNESS_MAP.has(snapped) || (snapped >= 20 && snapped <= 90)).toBe(true);
+        expect((second.written as { ispSettings: { icrCustomValue: number } }).ispSettings.icrCustomValue)
+          .toBe((first.written as { ispSettings: { icrCustomValue: number } }).ispSettings.icrCustomValue);
+        expect(second.brightness).toBe(first.brightness);
       }
     });
   });
 });
 
-describe('Night Vision Dimmer - Custom Range Interpolation', () => {
+describe('Night Vision Dimmer - On/Off', () => {
 
-  describe('brightness to icrCustomValue', () => {
+  it('turning off writes the off mode', async () => {
 
-    it('maps brightness 20 to icr 0', () => {
+    const { camera, dimmer } = makeControls('auto');
 
-      expect(brightnessToIcr(20)).toBe(0);
-    });
+    await dimmer.getCharacteristic(hap.Characteristic.On).handleSetRequest(false);
 
-    it('maps brightness 27 to icr 1', () => {
-
-      expect(brightnessToIcr(27)).toBe(1);
-    });
-
-    it('maps brightness 55 to icr 5', () => {
-
-      expect(brightnessToIcr(55)).toBe(5);
-    });
-
-    it('maps brightness 90 to icr 10', () => {
-
-      expect(brightnessToIcr(90)).toBe(10);
-    });
+    expect(camera.writeDevice.mock.calls[0]?.[0]).toEqual({ ispSettings: { irLedMode: 'off' } });
   });
 
-  describe('round-trip: brightness → icr → brightness is stable', () => {
+  it('turning on restores the mode implied by the current brightness', async () => {
 
-    it('every value in 20-90 round-trips to a stable brightness', () => {
+    const { camera, dimmer } = makeControls('off');
 
-      for(let brightness = 20; brightness <= 90; brightness++) {
+    dimmer.updateCharacteristic(hap.Characteristic.Brightness, 5);
+    await dimmer.getCharacteristic(hap.Characteristic.On).handleSetRequest(true);
 
-        const icr = brightnessToIcr(brightness);
-        const roundTrip = icrToBrightness(icr);
-        const secondIcr = brightnessToIcr(roundTrip);
-
-        // The quantized brightness should produce the same icr (idempotent after one round-trip).
-        expect(secondIcr).toBe(icr);
-      }
-    });
-
-    it('icr values 0-10 produce round-trip stable brightnesses', () => {
-
-      for(let icr = 0; icr <= 10; icr++) {
-
-        const brightness = icrToBrightness(icr);
-        const roundTripIcr = brightnessToIcr(brightness);
-
-        expect(roundTripIcr).toBe(icr);
-      }
-    });
+    expect(camera.writeDevice.mock.calls[0]?.[0]).toEqual({ ispSettings: { irLedMode: 'autoFilterOnly' } });
   });
 
-  describe('icr range bounds', () => {
+  it('turning on at a custom brightness selects the custom mode', async () => {
 
-    it('icr 0 maps to brightness 20', () => {
+    const { camera, dimmer } = makeControls('off');
 
-      expect(icrToBrightness(0)).toBe(20);
-    });
+    dimmer.updateCharacteristic(hap.Characteristic.Brightness, 55);
+    await dimmer.getCharacteristic(hap.Characteristic.On).handleSetRequest(true);
 
-    it('icr 10 maps to brightness 90', () => {
-
-      expect(icrToBrightness(10)).toBe(90);
-    });
+    expect(camera.writeDevice.mock.calls[0]?.[0]).toEqual({ ispSettings: { irLedMode: 'custom' } });
   });
 });
 
 describe('Night Vision Getter', () => {
 
-  it('returns false for "off" mode', () => {
+  it.each([
+    [ 'off', false ],
+    [ 'auto', true ],
+    [ 'on', true ],
+    [ 'autoFilterOnly', true ],
+    [ 'custom', true ],
+    [ 'customFilterOnly', true ],
+  ])('reports On for mode "%s" as %s', async (mode, expected) => {
 
-    expect(isNightVisionOn('off')).toBe(false);
-  });
+    const { dimmer } = makeControls(mode);
 
-  it('returns true for "auto" mode', () => {
-
-    expect(isNightVisionOn('auto')).toBe(true);
-  });
-
-  it('returns true for "on" mode', () => {
-
-    expect(isNightVisionOn('on')).toBe(true);
-  });
-
-  it('returns true for "autoFilterOnly" mode', () => {
-
-    expect(isNightVisionOn('autoFilterOnly')).toBe(true);
-  });
-
-  it('returns true for "custom" mode', () => {
-
-    expect(isNightVisionOn('custom')).toBe(true);
-  });
-
-  it('returns true for "customFilterOnly" mode', () => {
-
-    expect(isNightVisionOn('customFilterOnly')).toBe(true);
+    expect(dimmer.getCharacteristic(hap.Characteristic.On).value).toBe(expected);
+    await expect(dimmer.getCharacteristic(hap.Characteristic.On).handleGetRequest()).resolves.toBe(expected);
   });
 });
 
 describe('Night Vision Brightness Getter', () => {
 
-  it('returns correct brightness for fixed modes', () => {
+  it.each([
+    [ 'off', 0, 0 ],
+    [ 'autoFilterOnly', 0, 5 ],
+    [ 'auto', 0, 10 ],
+    [ 'on', 0, 100 ],
+    [ 'custom', 0, 20 ],
+    [ 'custom', 5, 55 ],
+    [ 'custom', 10, 90 ],
+    [ 'customFilterOnly', 0, 20 ],
+    [ 'customFilterOnly', 5, 55 ],
+    [ 'customFilterOnly', 10, 90 ],
+  ])('reports mode "%s" with icrCustomValue %i as brightness %i', async (mode, icr, expected) => {
 
-    expect(nightVisionBrightness('off', 0)).toBe(0);
-    expect(nightVisionBrightness('autoFilterOnly', 0)).toBe(5);
-    expect(nightVisionBrightness('auto', 0)).toBe(10);
-    expect(nightVisionBrightness('on', 0)).toBe(100);
+    const { dimmer } = makeControls(mode, icr);
+
+    await expect(dimmer.getCharacteristic(hap.Characteristic.Brightness).handleGetRequest()).resolves.toBe(expected);
   });
 
-  it('interpolates custom mode brightness from icrCustomValue', () => {
+  it('returns 0 and logs an error for unknown modes', async () => {
 
-    expect(nightVisionBrightness('custom', 0)).toBe(20);
-    expect(nightVisionBrightness('custom', 5)).toBe(55);
-    expect(nightVisionBrightness('custom', 10)).toBe(90);
-  });
+    const { camera, dimmer } = makeControls('unknown');
 
-  it('interpolates customFilterOnly mode brightness from icrCustomValue', () => {
-
-    expect(nightVisionBrightness('customFilterOnly', 0)).toBe(20);
-    expect(nightVisionBrightness('customFilterOnly', 5)).toBe(55);
-    expect(nightVisionBrightness('customFilterOnly', 10)).toBe(90);
-  });
-
-  it('returns 0 for unknown modes', () => {
-
-    expect(nightVisionBrightness('unknown', 0)).toBe(0);
+    await expect(dimmer.getCharacteristic(hap.Characteristic.Brightness).handleGetRequest()).resolves.toBe(0);
+    expect(camera.log.error).toHaveBeenCalledWith('Unknown night vision value detected: %s.', 'unknown');
   });
 });

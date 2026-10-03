@@ -1,132 +1,189 @@
 /* Copyright(C) 2019-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
  *
- * doorbell-duration.test.ts: Tests for doorbell duration validation and chime logic from protect-doorbell.ts.
+ * doorbell-duration.test.ts: Tests for doorbell duration handling in DoorbellLcdMessages (protect-doorbell-messages.ts) and DoorbellChimes
+ * (protect-doorbell-chimes.ts).
  *
- * Covers MQTT message duration validation, configuration message duration parsing, physical chime duration
- * mapping, and digital chime duration clamping.
+ * Covers MQTT message duration validation and processing, configuration message duration parsing, physical chime duration mapping, and digital chime
+ * duration clamping, all exercised through the real delegates against a fake doorbell.
  */
-import {
-  PROTECT_DOORBELL_CHIME_DURATION_DIGITAL,
-  PROTECT_DOORBELL_CHIME_DURATION_MECHANICAL,
-  PROTECT_DOORBELL_MESSAGE_DURATION,
-} from '../src/settings.js';
+import * as hap from '@homebridge/hap-nodejs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PROTECT_DOORBELL_CHIME_DURATION_DIGITAL, PROTECT_DOORBELL_CHIME_DURATION_MECHANICAL, PROTECT_DOORBELL_MESSAGE_DURATION } from '../src/settings.js';
+import { DoorbellChimes } from '../src/devices/protect-doorbell-chimes.js';
+import { DoorbellLcdMessages } from '../src/devices/protect-doorbell-messages.js';
+import type { MessageInterface } from '../src/devices/protect-doorbell-messages.js';
+import type { ProtectDoorbell } from '../src/devices/protect-doorbell.js';
+import { ProtectReservedNames } from '../src/protect-types.js';
+
+const NOW = 1_700_000_000_000;
+
+// Options for our fake doorbell.
+interface FakeDoorbellOptions {
+
+  configMessages?: Record<string, unknown>[];
+  defaultMessageResetTimeoutMs?: number | undefined;
+  digitalChimeDuration?: number | undefined;
+}
+
+// Build a fake doorbell carrying only what the doorbell delegates consult.
+function makeDoorbell(options: FakeDoorbellOptions = {}): ProtectDoorbell & { log: { error: ReturnType<typeof vi.fn> }; mqttSet: (raw: string) => void;
+  writeDevice: ReturnType<typeof vi.fn> } {
+
+  let setHandler: ((value: string, rawValue: string) => void) | undefined;
+
+  return {
+
+    api: { hap },
+    getFeatureNumber: (option: string): number | undefined =>
+      (option === 'Doorbell.PhysicalChime.Duration.Digital') ? options.digitalChimeDuration : undefined,
+    hasFeature: (option: string): boolean => option === 'Doorbell.Messages',
+    log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+    mqttSet: (raw: string): void => setHandler?.(raw, raw),
+    nvr: {
+
+      config: { doorbellMessages: options.configMessages },
+      mqtt: {
+
+        subscribeGet: vi.fn(),
+        subscribeSet: vi.fn((_mac: string, _topic: string, _name: string, handler: (value: string, rawValue: string) => void) => {
+
+          setHandler = handler;
+        }),
+      },
+      ufp: { doorbellSettings: { allMessages: [], defaultMessageResetTimeoutMs: options.defaultMessageResetTimeoutMs } },
+    },
+    ufp: { mac: 'DOORBELLMAC' },
+    writeDevice: vi.fn(async (): Promise<boolean> => true),
+  } as unknown as ProtectDoorbell & { log: { error: ReturnType<typeof vi.fn> }; mqttSet: (raw: string) => void; writeDevice: ReturnType<typeof vi.fn> };
+}
+
+// Send a raw MQTT doorbell message through the real handler and return the LCD message written to Protect, if any.
+function sendMqtt(raw: string, options: FakeDoorbellOptions = {}): { error: ReturnType<typeof vi.fn>; written: unknown } {
+
+  const doorbell = makeDoorbell(options);
+
+  new DoorbellLcdMessages(doorbell).configureMqtt();
+  doorbell.mqttSet(raw);
+
+  return { error: doorbell.log.error, written: doorbell.writeDevice.mock.calls[0]?.[0] };
+}
 
 describe('MQTT Message Duration Validation', () => {
 
-  // Reproduction of the validation check from protect-doorbell.ts configureMqtt().
-  // Uses Number.isFinite to reject NaN, Infinity, and -Infinity.
-  function isValidDuration(duration: unknown): boolean {
+  beforeEach(() => {
 
-    return Number.isFinite(duration);
-  }
-
-  it('accepts a positive integer', () => {
-
-    expect(isValidDuration(30)).toBe(true);
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
   });
 
-  it('accepts zero', () => {
+  afterEach(() => {
 
-    expect(isValidDuration(0)).toBe(true);
+    vi.useRealTimers();
   });
 
-  it('accepts a positive float', () => {
+  it.each([
+    [ 'a positive integer', '30' ],
+    [ 'zero', '0' ],
+    [ 'a positive float', '5.5' ],
+    [ 'a negative number', '-1' ],
+  ])('accepts %s', (_label, duration) => {
 
-    expect(isValidDuration(5.5)).toBe(true);
+    const { error, written } = sendMqtt('{ "message": "Hi", "duration": ' + duration + ' }');
+
+    expect(written).toBeDefined();
+    expect(error).not.toHaveBeenCalled();
   });
 
-  it('accepts a negative number', () => {
+  it.each([
+    [ 'Infinity', '1e999' ],
+    [ '-Infinity', '-1e999' ],
+    [ 'a string', '"30"' ],
+    [ 'null', 'null' ],
+  ])('rejects %s', (_label, duration) => {
 
-    expect(isValidDuration(-1)).toBe(true);
+    const { error, written } = sendMqtt('{ "message": "Hi", "duration": ' + duration + ' }');
+
+    expect(written).toBeUndefined();
+    expect(error).toHaveBeenCalled();
   });
 
-  it('rejects NaN', () => {
+  it('rejects a payload without a message', () => {
 
-    expect(isValidDuration(NaN)).toBe(false);
+    const { error, written } = sendMqtt('{ "duration": 30 }');
+
+    expect(written).toBeUndefined();
+    expect(error).toHaveBeenCalled();
   });
 
-  it('rejects Infinity', () => {
+  it('rejects invalid JSON', () => {
 
-    expect(isValidDuration(Infinity)).toBe(false);
-  });
+    const { error, written } = sendMqtt('not json');
 
-  it('rejects -Infinity', () => {
-
-    expect(isValidDuration(-Infinity)).toBe(false);
-  });
-
-  it('rejects undefined', () => {
-
-    expect(isValidDuration(undefined)).toBe(false);
-  });
-
-  it('rejects string', () => {
-
-    expect(isValidDuration('30')).toBe(false);
-  });
-
-  it('rejects null', () => {
-
-    expect(isValidDuration(null)).toBe(false);
+    expect(written).toBeUndefined();
+    expect(error).toHaveBeenCalledWith('Unable to process MQTT message: "%s". Invalid JSON.', 'not json');
   });
 });
 
 describe('MQTT Duration Processing', () => {
 
-  const DEFAULT_DURATION = PROTECT_DOORBELL_MESSAGE_DURATION;
+  beforeEach(() => {
 
-  // Reproduction of the duration processing logic from protect-doorbell.ts configureMqtt().
-  function processMqttDuration(payload: { duration?: number }): number {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
 
-    if(!('duration' in payload) || (('duration' in payload) && ((payload.duration ?? 0) < 0))) {
+  afterEach(() => {
 
-      return DEFAULT_DURATION;
-    }
+    vi.useRealTimers();
+  });
 
-    return (payload.duration ?? 0) * 1000;
-  }
+  const lcdMessage = (resetAt: number | null): unknown => ({ lcdMessage: { resetAt, text: 'Hi', type: 'CUSTOM_MESSAGE' } });
 
   it('converts seconds to milliseconds', () => {
 
-    expect(processMqttDuration({ duration: 30 })).toBe(30000);
+    expect(sendMqtt('{ "message": "Hi", "duration": 30 }').written).toEqual(lcdMessage(NOW + 30000));
   });
 
-  it('uses default duration when duration is not specified', () => {
+  it('uses the built-in default duration when duration is not specified and the controller has none', () => {
 
-    expect(processMqttDuration({})).toBe(DEFAULT_DURATION);
+    expect(sendMqtt('{ "message": "Hi" }').written).toEqual(lcdMessage(NOW + PROTECT_DOORBELL_MESSAGE_DURATION));
   });
 
-  it('uses default duration when duration is negative', () => {
+  it("uses the controller's default duration when duration is not specified", () => {
 
-    expect(processMqttDuration({ duration: -1 })).toBe(DEFAULT_DURATION);
+    expect(sendMqtt('{ "message": "Hi" }', { defaultMessageResetTimeoutMs: 15000 }).written).toEqual(lcdMessage(NOW + 15000));
   });
 
-  it('accepts duration of 0 (non-expiring)', () => {
+  it('uses the default duration when duration is negative', () => {
 
-    expect(processMqttDuration({ duration: 0 })).toBe(0);
+    expect(sendMqtt('{ "message": "Hi", "duration": -5 }').written).toEqual(lcdMessage(NOW + PROTECT_DOORBELL_MESSAGE_DURATION));
+  });
+
+  it('accepts a duration of 0 as non-expiring', () => {
+
+    expect(sendMqtt('{ "message": "Hi", "duration": 0 }').written).toEqual(lcdMessage(null));
   });
 
   it('handles fractional seconds', () => {
 
-    expect(processMqttDuration({ duration: 1.5 })).toBe(1500);
+    expect(sendMqtt('{ "message": "Hi", "duration": 1.5 }').written).toEqual(lcdMessage(NOW + 1500));
+  });
+
+  it('resets the message when the message is blank', () => {
+
+    expect(sendMqtt('{ "message": "" }').written).toEqual({ lcdMessage: { resetAt: NOW } });
   });
 });
 
 describe('Configuration Message Duration Parsing', () => {
 
-  const DEFAULT_DURATION = PROTECT_DOORBELL_MESSAGE_DURATION;
+  // Run the real private getMessages() against a single configured message and return the duration it settled on.
+  function parseConfigDuration(entry: Record<string, unknown>, defaultMessageResetTimeoutMs?: number): number {
 
-  // Reproduction of the duration parsing from protect-doorbell.ts getMessages().
-  function parseConfigDuration(entry: { duration?: number }): number {
+    const messages = new DoorbellLcdMessages(makeDoorbell({ configMessages: [ { message: 'Hi', ...entry } ], defaultMessageResetTimeoutMs })) as unknown as
+      { getMessages: () => MessageInterface[] };
 
-    let duration = DEFAULT_DURATION;
-
-    if(('duration' in entry) && !isNaN(entry.duration as number) && ((entry.duration as number) >= 0)) {
-
-      duration = (entry.duration as number) * 1000;
-    }
-
-    return duration;
+    return messages.getMessages()[0]!.duration;
   }
 
   it('converts seconds to milliseconds for valid duration', () => {
@@ -136,17 +193,22 @@ describe('Configuration Message Duration Parsing', () => {
 
   it('uses default for missing duration', () => {
 
-    expect(parseConfigDuration({})).toBe(DEFAULT_DURATION);
+    expect(parseConfigDuration({})).toBe(PROTECT_DOORBELL_MESSAGE_DURATION);
+  });
+
+  it("uses the controller's default for missing duration when it has one", () => {
+
+    expect(parseConfigDuration({}, 20000)).toBe(20000);
   });
 
   it('uses default for negative duration', () => {
 
-    expect(parseConfigDuration({ duration: -1 })).toBe(DEFAULT_DURATION);
+    expect(parseConfigDuration({ duration: -1 })).toBe(PROTECT_DOORBELL_MESSAGE_DURATION);
   });
 
   it('uses default for NaN duration', () => {
 
-    expect(parseConfigDuration({ duration: NaN })).toBe(DEFAULT_DURATION);
+    expect(parseConfigDuration({ duration: NaN })).toBe(PROTECT_DOORBELL_MESSAGE_DURATION);
   });
 
   it('accepts 0 as non-expiring', () => {
@@ -154,95 +216,71 @@ describe('Configuration Message Duration Parsing', () => {
     expect(parseConfigDuration({ duration: 0 })).toBe(0);
   });
 
-  it('converts 60 seconds to 60000ms', () => {
+  it('tags configured messages as custom messages', () => {
 
-    expect(parseConfigDuration({ duration: 60 })).toBe(60000);
+    const messages = new DoorbellLcdMessages(makeDoorbell({ configMessages: [ { duration: 60, message: 'Hi' } ] })) as unknown as
+      { getMessages: () => MessageInterface[] };
+
+    expect(messages.getMessages()).toEqual([ { duration: 60000, text: 'Hi', type: 'CUSTOM_MESSAGE' } ]);
   });
 });
 
 describe('Physical Chime Duration Mapping', () => {
 
-  // Physical chime types and their corresponding duration constants.
-  const CHIME_DIGITAL = 'Switch.Doorbell.PhysicalChime.Digital';
-  const CHIME_MECHANICAL = 'Switch.Doorbell.PhysicalChime.Mechanical';
-  const CHIME_NONE = 'Switch.Doorbell.PhysicalChime.None';
-
-  // Reproduction of getPhysicalChimeDuration from protect-doorbell.ts.
-  function getPhysicalChimeDuration(physicalChimeType: string, digitalDuration: number): number {
-
-    switch(physicalChimeType) {
-
-      case CHIME_DIGITAL:
-
-        return digitalDuration;
-
-      case CHIME_MECHANICAL:
-
-        return PROTECT_DOORBELL_CHIME_DURATION_MECHANICAL;
-
-      case CHIME_NONE:
-      default:
-
-        return 0;
-    }
-  }
+  const chimes = (digitalChimeDuration?: number): DoorbellChimes => new DoorbellChimes(makeDoorbell({ digitalChimeDuration }));
 
   it('returns the digital chime duration for digital type', () => {
 
-    expect(getPhysicalChimeDuration(CHIME_DIGITAL, 1000)).toBe(1000);
+    expect(chimes().getPhysicalChimeDuration(ProtectReservedNames.SWITCH_DOORBELL_CHIME_DIGITAL)).toBe(PROTECT_DOORBELL_CHIME_DURATION_DIGITAL);
   });
 
   it('returns the mechanical chime constant for mechanical type', () => {
 
-    expect(getPhysicalChimeDuration(CHIME_MECHANICAL, 1000)).toBe(PROTECT_DOORBELL_CHIME_DURATION_MECHANICAL);
+    expect(chimes().getPhysicalChimeDuration(ProtectReservedNames.SWITCH_DOORBELL_CHIME_MECHANICAL)).toBe(PROTECT_DOORBELL_CHIME_DURATION_MECHANICAL);
   });
 
   it('returns 0 for none type', () => {
 
-    expect(getPhysicalChimeDuration(CHIME_NONE, 1000)).toBe(0);
+    expect(chimes().getPhysicalChimeDuration(ProtectReservedNames.SWITCH_DOORBELL_CHIME_NONE)).toBe(0);
   });
 
   it('returns 0 for unknown type', () => {
 
-    expect(getPhysicalChimeDuration('unknown', 1000)).toBe(0);
+    expect(chimes().getPhysicalChimeDuration('unknown' as ProtectReservedNames)).toBe(0);
   });
 
   it('digital duration is configurable', () => {
 
-    expect(getPhysicalChimeDuration(CHIME_DIGITAL, 2000)).toBe(2000);
-    expect(getPhysicalChimeDuration(CHIME_DIGITAL, 500)).toBe(500);
+    expect(chimes(2000).getPhysicalChimeDuration(ProtectReservedNames.SWITCH_DOORBELL_CHIME_DIGITAL)).toBe(2000);
   });
 });
 
 describe('Digital Chime Duration Clamping', () => {
 
-  // Reproduction of the clamping in ProtectDoorbell constructor.
-  function clampDigitalChimeDuration(duration: number): number {
-
-    if(duration < 1000) {
-
-      return 1000;
-    }
-
-    return duration;
-  }
+  const digitalDuration = (configured?: number): number => new DoorbellChimes(makeDoorbell({ digitalChimeDuration: configured })).chimeDigitalDuration;
 
   it('clamps values below 1000 to 1000', () => {
 
-    expect(clampDigitalChimeDuration(500)).toBe(1000);
-    expect(clampDigitalChimeDuration(0)).toBe(1000);
-    expect(clampDigitalChimeDuration(999)).toBe(1000);
+    expect(digitalDuration(500)).toBe(1000);
+    expect(digitalDuration(0)).toBe(1000);
+    expect(digitalDuration(999)).toBe(1000);
   });
 
-  it('leaves values at or above 1000 unchanged', () => {
+  it('leaves values between 1000 and 10000 unchanged', () => {
 
-    expect(clampDigitalChimeDuration(1000)).toBe(1000);
-    expect(clampDigitalChimeDuration(2000)).toBe(2000);
-    expect(clampDigitalChimeDuration(5000)).toBe(5000);
+    expect(digitalDuration(1000)).toBe(1000);
+    expect(digitalDuration(2000)).toBe(2000);
+    expect(digitalDuration(10000)).toBe(10000);
   });
 
-  it('the default digital chime duration is at least 1000ms', () => {
+  it('clamps values above 10000 to 10000', () => {
 
+    expect(digitalDuration(10001)).toBe(10000);
+  });
+
+  it('uses the default digital chime duration when none is configured', () => {
+
+    expect(digitalDuration()).toBe(PROTECT_DOORBELL_CHIME_DURATION_DIGITAL);
     expect(PROTECT_DOORBELL_CHIME_DURATION_DIGITAL).toBeGreaterThanOrEqual(1000);
   });
 });

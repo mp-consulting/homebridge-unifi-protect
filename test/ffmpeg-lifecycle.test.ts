@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { BOX_HEADER_SIZE } from '../src/lib/ffmpeg/fmp4.js';
 import { FfmpegExec } from '../src/lib/ffmpeg/exec.js';
 import { FfmpegLivestreamProcess } from '../src/lib/ffmpeg/record.js';
-import { FfmpegProcess } from '../src/lib/ffmpeg/process.js';
+import { FfmpegProcess, redactCommandLine } from '../src/lib/ffmpeg/process.js';
 import { FfmpegStreamingProcess, type HomebridgeStreamingDelegate } from '../src/lib/ffmpeg/stream.js';
 import type { FfmpegOptions } from '../src/lib/ffmpeg/options.js';
 import type { PassThrough } from 'node:stream';
@@ -302,6 +302,107 @@ describe('FfmpegLivestreamProcess box parsing', () => {
     restartChild.emit('exit', null, null);
 
     expect(closeCount).toBe(2);
+  });
+});
+
+describe('FfmpegLivestreamProcess initialization segment wait', () => {
+
+  it('shares a single pending wait across callers and resolves it with the init segment', async () => {
+
+    const { child, proc } = createLivestream();
+    const first = proc.getInitSegment();
+    const second = proc.getInitSegment();
+
+    expect(proc.listenerCount('initsegment')).toBe(1);
+
+    const init = Buffer.concat([ box('ftyp', Buffer.alloc(4)), box('moov', Buffer.alloc(4)) ]);
+
+    child.stdout.emit('data', Buffer.concat([ init, box('moof', Buffer.alloc(4)) ]));
+
+    await expect(first).resolves.toEqual(init);
+    await expect(second).resolves.toEqual(init);
+    expect(proc.listenerCount('initsegment')).toBe(0);
+
+    proc.stop();
+    child.emit('exit', null, null);
+  });
+
+  it('rejects and releases a pending wait when the process stops', async () => {
+
+    const { child, proc } = createLivestream();
+    const pending = proc.getInitSegment();
+
+    proc.stop();
+
+    await expect(pending).rejects.toThrow();
+    expect(proc.listenerCount('initsegment')).toBe(0);
+
+    child.emit('exit', null, null);
+  });
+
+  it('rejects and releases a pending wait when the process exits on its own', async () => {
+
+    const { child, proc } = createLivestream();
+    const pending = proc.getInitSegment();
+
+    child.emit('exit', 1, null);
+
+    await expect(pending).rejects.toThrow();
+    expect(proc.listenerCount('initsegment')).toBe(0);
+  });
+
+  it('rejects immediately when no process is running', async () => {
+
+    const proc = new FfmpegLivestreamProcess(createOptions(), recordingConfig, { enableAudio: false, url: 'rtsp://127.0.0.1/test' });
+
+    await expect(proc.getInitSegment()).rejects.toThrow('No active FFmpeg livestream process.');
+    expect(proc.listenerCount('initsegment')).toBe(0);
+  });
+});
+
+describe('FfmpegProcess diagnostics', () => {
+
+  it('redacts passwords from URLs in the logged command line', () => {
+
+    expect(redactCommandLine([ '-i', 'rtsp://admin:s3cret@10.0.0.2:554/stream', '-i', 'rtsps://host/path?enableSrtp', '-f', 'mp4', 'pipe:1' ]))
+      .toBe('-i rtsp://admin:***@10.0.0.2:554/stream -i rtsps://host/path?enableSrtp -f mp4 pipe:1');
+
+    const options = createOptions();
+    const proc = new FfmpegProcess(options, [ '-i', 'http://user:hunter2@camera/audio.cgi' ]);
+
+    proc.start();
+
+    const logged = vi.mocked(options.log.debug).mock.calls.map(call => call.map(String).join(' ')).join('\n');
+
+    expect(logged).toContain('http://user:***@camera/audio.cgi');
+    expect(logged).not.toContain('hunter2');
+
+    proc.stop();
+    lastChild().emit('exit', null, null);
+  });
+
+  it('bounds the stderr log and resets it for each process lifecycle', () => {
+
+    const proc = new FfmpegProcess(createOptions(), [ '-i', 'test' ]);
+
+    proc.start();
+
+    const child = lastChild();
+
+    child.stderr.emit('data', Buffer.from(Array.from({ length: 500 }, (_, index) => 'line ' + index.toString()).join('\n') + '\n'));
+
+    expect(proc.stderrLog.length).toBe(100);
+    expect(proc.stderrLog[proc.stderrLog.length - 1]).toBe('line 499');
+
+    proc.stop();
+    child.emit('exit', null, null);
+
+    // A restarted instance starts with fresh diagnostics.
+    proc.start();
+    expect(proc.stderrLog).toEqual([]);
+
+    proc.stop();
+    lastChild().emit('exit', null, null);
   });
 });
 

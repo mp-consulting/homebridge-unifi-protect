@@ -60,8 +60,8 @@ const TWOWAY_HEARTBEAT_INTERVAL = 3;
  */
 export class RtpDemuxer extends EventEmitter {
 
-  private heartbeatTimer?: NodeJS.Timeout;
-  private heartbeatMsg?: Buffer;
+  private heartbeatTimer?: NodeJS.Timeout | undefined;
+  private heartbeatMsg?: Buffer | undefined;
   private _isRunning: boolean;
   private log?: HomebridgePluginLogging;
   private inputPort: number;

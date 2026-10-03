@@ -157,12 +157,15 @@ export const handleSetupSubmit = async (event) => {
   try {
 
 
-    const devices = await homebridge.request('/getDevices', { address, password, username, verifyTls });
+    // Tag the request so the server can hand back this validation's error message even if another request is in flight. crypto.randomUUID() is only
+    // available in secure contexts, and the Homebridge UI is frequently served over plain HTTP on the LAN, so we build a simple unique-enough token.
+    const requestId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    const devices = await homebridge.request('/getDevices', { address, password, requestId, username, verifyTls });
 
     if(!devices?.length) {
 
 
-      const errorDetail = await homebridge.request('/getErrorMessage');
+      const errorDetail = await homebridge.request('/getErrorMessage', { requestId });
 
       $('setupErrorText').textContent = 'Unable to connect. ' + (errorDetail || 'Check your address and credentials.');
       $('setupError').style.display = 'block';

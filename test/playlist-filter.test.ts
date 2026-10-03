@@ -1,94 +1,76 @@
 /* Copyright(C) 2017-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
  *
- * playlist-filter.test.ts: Tests for M3U playlist camera filtering and sorting logic from protect-playlist.ts.
+ * playlist-filter.test.ts: Tests for M3U playlist camera filtering and sorting in protect-playlist.ts.
  *
- * The playlist server filters cameras (no AV1 codec, at least one RTSP-enabled channel) and sorts
- * them alphabetically by name. These tests validate the filter and sort predicates in isolation.
+ * The playlist only publishes cameras that can be streamed over RTSP (no AV1 codec, at least one RTSP-enabled channel), sorted alphabetically by name. These
+ * tests exercise the real generatePlaylist() and inspect which cameras end up in the output, and in what order.
  */
+import { describe, expect, it } from 'vitest';
+import type { ProtectNvrBootstrapData } from '../src/unifi/index.js';
+import { generatePlaylist } from '../src/protect-playlist.js';
 
-// Minimal camera type for the filter/sort logic.
-interface PlaylistCamera {
+interface CameraSpec {
 
+  codec?: string;
+  hasPackage?: boolean;
   name: string;
-  videoCodec: string;
-  channels: { isRtspEnabled: boolean; name: string; rtspAlias: string }[];
-  featureFlags: { hasPackageCamera: boolean };
+  rtspEnabled?: boolean;
 }
 
-// Reproduction of the camera filter predicate from ProtectPlaylistServer.
-function filterPlaylistCameras(cameras: PlaylistCamera[]): PlaylistCamera[] {
-
-  return cameras
-    .filter(x => (x.videoCodec !== 'av1') && x.channels.some(channel => channel.isRtspEnabled))
-    .sort((a, b) => {
-
-      if(!a.name || !b.name) {
-        return 0;
-      }
-      if(a.name < b.name) {
-        return -1;
-      }
-      if(a.name > b.name) {
-        return 1;
-      }
-
-      return 0;
-    });
-}
-
-// Helper to create a mock camera.
-function makeCamera(name: string, codec = 'h264', rtspEnabled = true, hasPackage = false): PlaylistCamera {
+// Build a minimal bootstrap containing the given cameras.
+function makeBootstrap(cameras: CameraSpec[]): ProtectNvrBootstrapData {
 
   return {
-    name,
-    videoCodec: codec,
-    channels: [
-      { isRtspEnabled: rtspEnabled, name: 'High', rtspAlias: name.toLowerCase().replace(/\s/g, '') + '_high' },
-      { isRtspEnabled: rtspEnabled, name: 'Medium', rtspAlias: name.toLowerCase().replace(/\s/g, '') + '_med' },
-    ],
-    featureFlags: { hasPackageCamera: hasPackage },
-  };
+
+    cameras: cameras.map(camera => {
+
+      const alias = camera.name.toLowerCase().replace(/\s/g, '');
+
+      return {
+
+        channels: [
+          { isRtspEnabled: camera.rtspEnabled ?? true, name: 'High', rtspAlias: alias + '_high' },
+          { isRtspEnabled: camera.rtspEnabled ?? true, name: 'Medium', rtspAlias: alias + '_med' },
+          ...(camera.hasPackage ? [{ isRtspEnabled: true, name: 'Package Camera', rtspAlias: alias + '_pkg' }] : []),
+        ],
+        featureFlags: { hasPackageCamera: camera.hasPackage ?? false },
+        marketName: 'G4 Pro',
+        name: camera.name,
+        videoCodec: camera.codec ?? 'h264',
+      };
+    }),
+    nvr: { host: '10.0.0.1', ports: { rtsp: 7447 } },
+  } as unknown as ProtectNvrBootstrapData;
 }
 
-describe('M3U Playlist Camera Filtering', () => {
+// Return the camera names published in a playlist, in order.
+function publishedNames(cameras: CameraSpec[]): string[] {
+
+  return [...generatePlaylist(makeBootstrap(cameras)).matchAll(/channel-id="([^"]*)"/g)].map(match => match[1] ?? '');
+}
+
+describe('M3U playlist camera filtering', () => {
 
   describe('codec filtering', () => {
 
     it('includes h264 cameras', () => {
 
-      const cameras = [makeCamera('Front Door', 'h264')];
-      const result = filterPlaylistCameras(cameras);
-
-      expect(result).toHaveLength(1);
+      expect(publishedNames([{ codec: 'h264', name: 'Front Door' }])).toEqual(['Front Door']);
     });
 
-    it('includes h265/hevc cameras', () => {
+    it('includes h265 cameras', () => {
 
-      const cameras = [makeCamera('Back Yard', 'h265')];
-      const result = filterPlaylistCameras(cameras);
-
-      expect(result).toHaveLength(1);
+      expect(publishedNames([{ codec: 'h265', name: 'Backyard' }])).toEqual(['Backyard']);
     });
 
     it('excludes av1 cameras', () => {
 
-      const cameras = [makeCamera('AV1 Camera', 'av1')];
-      const result = filterPlaylistCameras(cameras);
-
-      expect(result).toHaveLength(0);
+      expect(publishedNames([{ codec: 'av1', name: 'Garage' }])).toEqual([]);
     });
 
-    it('filters out only av1 from mixed set', () => {
+    it('filters out only av1 from a mixed set', () => {
 
-      const cameras = [
-        makeCamera('H264 Cam', 'h264'),
-        makeCamera('AV1 Cam', 'av1'),
-        makeCamera('H265 Cam', 'h265'),
-      ];
-      const result = filterPlaylistCameras(cameras);
-
-      expect(result).toHaveLength(2);
-      expect(result.map(c => c.name)).toEqual(['H264 Cam', 'H265 Cam']);
+      expect(publishedNames([{ codec: 'h264', name: 'A' }, { codec: 'av1', name: 'B' }, { codec: 'h265', name: 'C' }])).toEqual(['A', 'C']);
     });
   });
 
@@ -96,119 +78,68 @@ describe('M3U Playlist Camera Filtering', () => {
 
     it('excludes cameras with no RTSP-enabled channels', () => {
 
-      const cameras = [makeCamera('No RTSP', 'h264', false)];
-      const result = filterPlaylistCameras(cameras);
-
-      expect(result).toHaveLength(0);
+      expect(publishedNames([{ name: 'Disabled', rtspEnabled: false }])).toEqual([]);
     });
 
-    it('includes cameras with at least one RTSP-enabled channel', () => {
+    it('excludes cameras that are both av1 and lack RTSP', () => {
 
-      const camera: PlaylistCamera = {
-        name: 'Partial RTSP',
-        videoCodec: 'h264',
-        channels: [
-          { isRtspEnabled: false, name: 'High', rtspAlias: 'partial_high' },
-          { isRtspEnabled: true, name: 'Medium', rtspAlias: 'partial_med' },
-        ],
-        featureFlags: { hasPackageCamera: false },
-      };
-
-      const result = filterPlaylistCameras([camera]);
-
-      expect(result).toHaveLength(1);
+      expect(publishedNames([{ codec: 'av1', name: 'Both', rtspEnabled: false }])).toEqual([]);
     });
 
-    it('excludes cameras with both av1 codec and no RTSP', () => {
+    it('publishes the first RTSP alias as the stream URL', () => {
 
-      const cameras = [makeCamera('Excluded', 'av1', false)];
-      const result = filterPlaylistCameras(cameras);
-
-      expect(result).toHaveLength(0);
+      expect(generatePlaylist(makeBootstrap([{ name: 'Front Door' }]))).toContain('rtsp://10.0.0.1:7447/frontdoor_high');
     });
   });
 
-  describe('alphabetical sorting', () => {
+  describe('sorting', () => {
 
     it('sorts cameras alphabetically by name', () => {
 
-      const cameras = [
-        makeCamera('Garage'),
-        makeCamera('Back Door'),
-        makeCamera('Front Door'),
-        makeCamera('Attic'),
-      ];
-      const result = filterPlaylistCameras(cameras);
-
-      expect(result.map(c => c.name)).toEqual(['Attic', 'Back Door', 'Front Door', 'Garage']);
+      expect(publishedNames([{ name: 'Zebra' }, { name: 'Apple' }, { name: 'Mango' }])).toEqual(['Apple', 'Mango', 'Zebra']);
     });
 
-    it('handles cameras with identical names', () => {
+    it('keeps cameras with identical names', () => {
 
-      const cameras = [makeCamera('Camera'), makeCamera('Camera')];
-      const result = filterPlaylistCameras(cameras);
-
-      expect(result).toHaveLength(2);
+      expect(publishedNames([{ name: 'Same' }, { name: 'Same' }])).toEqual(['Same', 'Same']);
     });
-
-    it('handles single camera', () => {
-
-      const cameras = [makeCamera('Solo')];
-      const result = filterPlaylistCameras(cameras);
-
-      expect(result).toHaveLength(1);
-      expect(result[0].name).toBe('Solo');
-    });
-  });
-
-  describe('combined filter and sort', () => {
 
     it('filters then sorts a mixed set of cameras', () => {
 
-      const cameras = [
-        makeCamera('Zebra Cam', 'h264'),
-        makeCamera('AV1 Only', 'av1'),
-        makeCamera('Alpha Cam', 'h265'),
-        makeCamera('No Stream', 'h264', false),
-        makeCamera('Middle Cam', 'h264'),
-      ];
-      const result = filterPlaylistCameras(cameras);
+      expect(publishedNames([
 
-      expect(result).toHaveLength(3);
-      expect(result.map(c => c.name)).toEqual(['Alpha Cam', 'Middle Cam', 'Zebra Cam']);
-    });
-
-    it('returns empty array for all-excluded cameras', () => {
-
-      const cameras = [
-        makeCamera('AV1', 'av1'),
-        makeCamera('No RTSP', 'h264', false),
-      ];
-      const result = filterPlaylistCameras(cameras);
-
-      expect(result).toHaveLength(0);
-    });
-
-    it('returns empty array for empty input', () => {
-
-      expect(filterPlaylistCameras([])).toHaveLength(0);
+        { name: 'Zulu' },
+        { codec: 'av1', name: 'Alpha' },
+        { name: 'Bravo', rtspEnabled: false },
+        { name: 'Charlie' },
+      ])).toEqual(['Charlie', 'Zulu']);
     });
   });
 
-  describe('package camera detection', () => {
+  describe('edge cases', () => {
 
-    it('identifies cameras with package camera feature', () => {
+    it('publishes only the header when every camera is excluded', () => {
 
-      const camera = makeCamera('Doorbell Pro', 'h264', true, true);
-
-      expect(camera.featureFlags.hasPackageCamera).toBe(true);
+      expect(generatePlaylist(makeBootstrap([{ codec: 'av1', name: 'X' }, { name: 'Y', rtspEnabled: false }]))).toBe('#EXTM3U\n');
     });
 
-    it('identifies cameras without package camera feature', () => {
+    it('publishes only the header for an empty camera list', () => {
 
-      const camera = makeCamera('Regular Cam');
+      expect(generatePlaylist(makeBootstrap([]))).toBe('#EXTM3U\n');
+    });
 
-      expect(camera.featureFlags.hasPackageCamera).toBe(false);
+    it('adds a package camera entry right after its doorbell', () => {
+
+      const names = publishedNames([{ hasPackage: true, name: 'Doorbell' }, { name: 'Yard' }]);
+
+      expect(names).toHaveLength(3);
+      expect(names[0]).toBe('Doorbell');
+      expect(names[2]).toBe('Yard');
+    });
+
+    it('does not add a package entry for cameras without one', () => {
+
+      expect(publishedNames([{ name: 'Doorbell' }])).toEqual(['Doorbell']);
     });
   });
 });

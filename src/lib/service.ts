@@ -19,7 +19,14 @@ let hasNameUUIDs: Nullable<Set<string>> = null;
 // which always exists (every service has at least one required characteristic). Centralized here so the fragile cast lives in one place.
 function getCharacteristicConstructor(service: Service): typeof Characteristic {
 
-  return service.characteristics[0].constructor as unknown as typeof Characteristic;
+  const [ characteristic ] = service.characteristics;
+
+  if(!characteristic) {
+
+    throw new TypeError('Unable to determine the Characteristic constructor of a service without characteristics.');
+  }
+
+  return characteristic.constructor as unknown as typeof Characteristic;
 }
 
 // Initializes the cached UUID Sets for service characteristic lookups.

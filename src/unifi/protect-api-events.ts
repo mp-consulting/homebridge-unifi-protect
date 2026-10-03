@@ -77,6 +77,10 @@ const inflateAsync = promisify(zlib.inflate);
 // UniFi Protect events API packet header size, in bytes.
 const EVENT_PACKET_HEADER_SIZE = 8;
 
+// Maximum size, in bytes, that we allow a single compressed frame to inflate to. Realtime event payloads are small JSON documents - this cap guards against a
+// decompression bomb from a buggy or hostile endpoint driving unbounded memory allocation. It mirrors the WebSocket client's limit on the compressed size.
+export const EVENT_PACKET_MAX_INFLATED_SIZE = 16 * 1024 * 1024;
+
 // Update realtime API packet types.
 enum ProtectEventPacketType {
 
@@ -220,8 +224,23 @@ async function decodeFrame(log: ProtectLogging, packet: Buffer, packetType: Prot
 
   // Decompress the payload if the deflated flag is set, using async inflate to avoid blocking the event loop. For uncompressed payloads, we just slice past the
   // header.
-  const payload = packet.readUInt8(ProtectEventPacketHeader.DEFLATED) ?
-    await inflateAsync(packet.subarray(EVENT_PACKET_HEADER_SIZE)) : packet.subarray(EVENT_PACKET_HEADER_SIZE);
+  let payload = packet.subarray(EVENT_PACKET_HEADER_SIZE);
+
+  if(packet.readUInt8(ProtectEventPacketHeader.DEFLATED)) {
+
+    try {
+
+      payload = await inflateAsync(payload, { maxOutputLength: EVENT_PACKET_MAX_INFLATED_SIZE });
+    } catch(error) {
+
+      // The frame either exceeds our size cap or is corrupt. Either way, we drop the packet.
+      log.error('Realtime events API: dropping update packet that could not be decompressed: %s.',
+        ((error as NodeJS.ErrnoException).code === 'ERR_BUFFER_TOO_LARGE') ? 'decompressed size exceeds ' + EVENT_PACKET_MAX_INFLATED_SIZE.toString() + ' bytes' :
+          error);
+
+      return null;
+    }
+  }
 
   // If it's an action frame, it can only have one format.
   if(frameType === ProtectEventPacketType.ACTION) {

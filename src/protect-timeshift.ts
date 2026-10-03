@@ -5,7 +5,7 @@
  */
 import { type FfmpegLivestreamProcess, type HomebridgePluginLogging, type Nullable, runWithTimeout } from './lib/index.js';
 import { EventEmitter } from 'node:events';
-import { PROTECT_SEGMENT_RESOLUTION } from './settings.js';
+import { PROTECT_LIVESTREAM_INIT_SEGMENT_TIMEOUT, PROTECT_SEGMENT_RESOLUTION } from './settings.js';
 import type { ProtectCamera } from './devices/index.js';
 import type { ProtectLivestream } from './unifi/index.js';
 import type { RtspEntry } from './devices/protect-camera.js';
@@ -17,11 +17,11 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
   private _isStarted: boolean;
   private _isTransmitting: boolean;
   private _segmentLength: number;
-  private eventHandlers: Record<string, ((segment: Buffer) => void) | (() => void)>;
-  private livestream?: FfmpegLivestreamProcess | ProtectLivestream;
+  private readonly eventHandlers: { close: () => void; segment: (segment: Buffer) => void };
+  private livestream?: FfmpegLivestreamProcess | ProtectLivestream | undefined;
   private readonly log: HomebridgePluginLogging;
   private readonly protectCamera: ProtectCamera;
-  private rtspEntry?: RtspEntry;
+  private rtspEntry?: RtspEntry | undefined;
   private segmentCount: number;
 
   constructor(protectCamera: ProtectCamera) {
@@ -32,7 +32,6 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this._buffer = [];
     this._isStarted = false;
     this._isTransmitting = false;
-    this.eventHandlers = {};
     this.log = protectCamera.log;
     this.protectCamera = protectCamera;
     this.segmentCount = 1;
@@ -42,14 +41,14 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     this._segmentLength = PROTECT_SEGMENT_RESOLUTION;
 
     // Now let's configure the timeshift buffer.
-    this.configureTimeshiftBuffer();
+    this.eventHandlers = this.configureTimeshiftBuffer();
   }
 
   // Configure the timeshift buffer.
-  private configureTimeshiftBuffer(): void {
+  private configureTimeshiftBuffer(): { close: () => void; segment: (segment: Buffer) => void } {
 
     // If the API connection has closed, let the user know.
-    this.eventHandlers.close = (): void => {
+    const onClose = (): void => {
 
       if(this.isRestarting) {
 
@@ -61,7 +60,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     };
 
     // Listen for any segments sent by the UniFi Protect livestream in order to create our timeshift buffer.
-    this.eventHandlers.segment = (segment: Buffer): void => {
+    const onSegment = (segment: Buffer): void => {
 
       // If we're transmitting, send the segment as quickly as we can so FFmpeg can consume it.
       if(this.isTransmitting) {
@@ -78,6 +77,8 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
         this._buffer.shift();
       }
     };
+
+    return { close: onClose, segment: onSegment };
   }
 
   // Start the livestream and begin maintaining our timeshift buffer.
@@ -114,7 +115,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     if(!(await this.protectCamera.livestream.start(rtspEntry, this._segmentLength))) {
 
       // Something went wrong, let's cleanup our event handlers and we're done.
-      Object.keys(this.eventHandlers).forEach(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
+      this.removeListeners();
 
       return false;
     }
@@ -136,6 +137,13 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     return true;
   }
 
+  // Remove our listeners from the livestream.
+  private removeListeners(): void {
+
+    this.livestream?.off('close', this.eventHandlers.close);
+    this.livestream?.off('segment', this.eventHandlers.segment);
+  }
+
   // Stop timeshifting the livestream.
   public stop(): boolean {
 
@@ -147,7 +155,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
         this.protectCamera.livestream.stop(this.rtspEntry);
       }
 
-      Object.keys(this.eventHandlers).forEach(eventName => this.livestream?.off(eventName, this.eventHandlers[eventName]));
+      this.removeListeners();
     }
 
     this._buffer = [];
@@ -217,7 +225,12 @@ export class ProtectTimeshiftBuffer extends EventEmitter {
     // If we have the initialization segment, return it. If we haven't seen it yet, wait for a couple of seconds and check an additional time. getInitSegment()
     // rejects if the livestream is stopped (or was never started) before the segment arrives - that must resolve to null here rather than propagate, since we
     // top out in void-invoked callers where a rejection would be unhandled.
-    return this.livestream.initSegment ?? await runWithTimeout(this.livestream.getInitSegment().catch(() => null), 2000);
+    return this.livestream.initSegment ?? await runWithTimeout(this.livestream.getInitSegment().catch((error: unknown) => {
+
+      this.log.debug('Unable to retrieve the fMP4 initialization segment: %s', (error instanceof Error) ? error.message : String(error));
+
+      return null;
+    }), PROTECT_LIVESTREAM_INIT_SEGMENT_TIMEOUT);
   }
 
   // Return the last duration milliseconds of the buffer, with an initialization segment.

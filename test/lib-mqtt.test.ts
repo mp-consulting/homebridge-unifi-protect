@@ -21,7 +21,7 @@ function createBroker(options: { connackCode?: number; respondToPings?: boolean 
 
     let buffer = Buffer.alloc(0);
 
-    socket.on('data', data => {
+    socket.on('data', (data: Buffer) => {
 
       buffer = Buffer.concat([ buffer, data ]);
 
@@ -39,7 +39,7 @@ function createBroker(options: { connackCode?: number; respondToPings?: boolean 
 
         for(;;) {
 
-          const byte = buffer[offset++];
+          const byte = buffer[offset++] ?? 0;
 
           length += (byte & 0x7F) * multiplier;
           multiplier *= 128;
@@ -55,7 +55,7 @@ function createBroker(options: { connackCode?: number; respondToPings?: boolean 
           return;
         }
 
-        const type = buffer[0] & 0xF0;
+        const type = (buffer[0] ?? 0) & 0xF0;
         const body = buffer.subarray(offset, offset + length);
 
         buffer = buffer.subarray(offset + length);
@@ -65,7 +65,7 @@ function createBroker(options: { connackCode?: number; respondToPings?: boolean 
           case 0x10: {
 
             // CONNECT: note the credential flags and acknowledge.
-            events.push({ hasPassword: !!(body[7] & 0x40), hasUsername: !!(body[7] & 0x80), type: 'connect' });
+            events.push({ hasPassword: !!((body[7] ?? 0) & 0x40), hasUsername: !!((body[7] ?? 0) & 0x80), type: 'connect' });
             socket.write(Buffer.from([ 0x20, 2, 0, options.connackCode ?? 0 ]));
 
             break;
@@ -78,7 +78,7 @@ function createBroker(options: { connackCode?: number; respondToPings?: boolean 
             const topic = body.subarray(4, 4 + topicLength).toString();
 
             events.push({ topic, type: 'subscribe' });
-            socket.write(Buffer.from([ 0x90, 3, body[0], body[1], 0 ]));
+            socket.write(Buffer.from([ 0x90, 3, body[0] ?? 0, body[1] ?? 0, 0 ]));
 
             const topicBuffer = Buffer.from(topic);
             const lengthPrefix = Buffer.alloc(2);
@@ -97,7 +97,7 @@ function createBroker(options: { connackCode?: number; respondToPings?: boolean 
             const topicLength = body.readUInt16BE(2);
 
             events.push({ topic: body.subarray(4, 4 + topicLength).toString(), type: 'unsubscribe' });
-            socket.write(Buffer.from([ 0xB0, 2, body[0], body[1] ]));
+            socket.write(Buffer.from([ 0xB0, 2, body[0] ?? 0, body[1] ?? 0 ]));
 
             break;
           }

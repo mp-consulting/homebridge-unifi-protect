@@ -11,7 +11,8 @@
  * (fMP4) streams. It enables locating specific box types, splitting fragments into their moof/mdat components, detecting keyframe (sync sample) segments by
  * parsing the TRUN sample flags, and identifying audio track presence in initialization segments.
  *
- * These utilities operate on complete Buffers and are independent of FFmpeg processes or streaming pipelines.
+ * These utilities are independent of FFmpeg processes or streaming pipelines. The inspection helpers operate on complete Buffers, while `FMp4BoxReader`
+ * incrementally reassembles top-level boxes from a chunked byte stream.
  *
  * @module
  */
@@ -23,6 +24,27 @@ import type { Nullable } from '../util.js';
  * @category FFmpeg
  */
 export const BOX_HEADER_SIZE = 8;
+
+/**
+ * ISO BMFF "mdat" box type encoded as a 32-bit integer, for comparison without string allocation in box-parsing hot paths.
+ *
+ * @category FFmpeg
+ */
+export const BOX_TYPE_MDAT = 0x6D646174;
+
+/**
+ * ISO BMFF "moof" box type encoded as a 32-bit integer.
+ *
+ * @category FFmpeg
+ */
+export const BOX_TYPE_MOOF = 0x6D6F6F66;
+
+/**
+ * ISO BMFF "moov" box type encoded as a 32-bit integer.
+ *
+ * @category FFmpeg
+ */
+export const BOX_TYPE_MOOV = 0x6D6F6F76;
 
 // TRUN fullbox header size: standard box header + 4 bytes version/flags + 4 bytes sample_count.
 const TRUN_HEADER_SIZE = BOX_HEADER_SIZE + 8;
@@ -293,4 +315,163 @@ export function splitMoofMdat(fragment: Buffer): Nullable<{ mdat: Buffer, moof: 
   }
 
   return { mdat: fragment.subarray(mdat.offset), moof: fragment.subarray(0, mdat.offset) };
+}
+
+/**
+ * A complete ISO BMFF box parsed from a byte stream by {@link FMp4BoxReader}.
+ *
+ * @property data      - The box payload, excluding the header.
+ * @property header    - The 8-byte box header.
+ * @property length    - The payload length in bytes (the box size minus the header size).
+ * @property type      - The 4-character box type encoded as a 32-bit big-endian integer.
+ *
+ * @category FFmpeg
+ */
+export interface FMp4ParsedBox {
+
+  data: Buffer;
+  header: Buffer;
+  length: number;
+  type: number;
+}
+
+/**
+ * Incremental ISO BMFF box reader for chunked byte streams such as FFmpeg's stdout.
+ *
+ * Chunks are fed in via {@link FMp4BoxReader.push} and every complete top-level box is handed to the callback in order. Boxes may be split across chunks at any
+ * offset, including inside the 8-byte header. Partial data is collected in an array with a running length and concatenated exactly once when the box it
+ * belongs to is complete, keeping reassembly linear in the box size rather than quadratic in the number of chunks.
+ *
+ * Box sizes smaller than the header size (zero-size, open-ended, or extended-size boxes) are treated as fatal stream corruption: `push()` returns `false`,
+ * `invalidBoxSize` records the offending size, and the reader discards its pending data.
+ *
+ * @category FFmpeg
+ */
+export class FMp4BoxReader {
+
+  /**
+   * The offending box size from the most recent corrupt box, or `null` if no corruption has been detected.
+   */
+  public invalidBoxSize: Nullable<number>;
+
+  // Size of the box currently being reassembled, or 0 when we don't yet have a complete header for it.
+  private boxSize: number;
+  private pending: Buffer[];
+  private pendingLength: number;
+
+  constructor() {
+
+    this.boxSize = 0;
+    this.invalidBoxSize = null;
+    this.pending = [];
+    this.pendingLength = 0;
+  }
+
+  /**
+   * Feeds a chunk of bytes into the reader, invoking `onBox` for every box completed by it.
+   *
+   * @param chunk      - The next chunk of the byte stream.
+   * @param onBox      - Callback invoked synchronously for each complete box, in stream order.
+   *
+   * @returns `true` if the stream remains parseable, `false` if a corrupt box size was encountered.
+   */
+  public push(chunk: Buffer, onBox: (box: FMp4ParsedBox) => void): boolean {
+
+    // Nothing pending - parse the chunk directly without copying it.
+    if(!this.pendingLength) {
+
+      return this.parse(chunk, onBox);
+    }
+
+    this.pending.push(chunk);
+    this.pendingLength += chunk.length;
+
+    // We know the size of the box we're reassembling and still don't have all of it. Keep collecting without copying.
+    if(this.boxSize && (this.pendingLength < this.boxSize)) {
+
+      return true;
+    }
+
+    // Either the pending box is now complete, or we were waiting on a split header. In both cases a single concatenation gives us a contiguous buffer to parse.
+    // For a split header, the pending bytes are fewer than the header size, so the copy is bounded by the size of this chunk.
+    const buffer = Buffer.concat(this.pending, this.pendingLength);
+
+    this.reset();
+
+    return this.parse(buffer, onBox);
+  }
+
+  /**
+   * Discards any partially received box data and clears the corruption state.
+   */
+  public reset(): void {
+
+    this.boxSize = 0;
+    this.invalidBoxSize = null;
+    this.pending = [];
+    this.pendingLength = 0;
+  }
+
+  // Walk the complete boxes in a contiguous buffer, stashing any trailing partial box for the next chunk.
+  private parse(buffer: Buffer, onBox: (box: FMp4ParsedBox) => void): boolean {
+
+    let offset = 0;
+
+    for(;;) {
+
+      const remaining = buffer.length - offset;
+
+      // We've consumed the buffer exactly.
+      if(!remaining) {
+
+        return true;
+      }
+
+      // Not enough bytes for a complete box header. Save them for the next chunk.
+      if(remaining < BOX_HEADER_SIZE) {
+
+        this.stash(buffer.subarray(offset), 0);
+
+        return true;
+      }
+
+      // The first four bytes represent the length of the entire box, including the header.
+      const size = buffer.readUInt32BE(offset);
+
+      // A valid box must be at least the header size. Anything smaller would leave us unable to advance, so we treat the stream as fatally corrupt.
+      if(size < BOX_HEADER_SIZE) {
+
+        this.reset();
+        this.invalidBoxSize = size;
+
+        return false;
+      }
+
+      // We don't have the whole box yet. Save what we have along with the size we're waiting for.
+      if(remaining < size) {
+
+        this.stash(buffer.subarray(offset), size);
+
+        return true;
+      }
+
+      onBox({
+
+        data: buffer.subarray(offset + BOX_HEADER_SIZE, offset + size),
+        header: buffer.subarray(offset, offset + BOX_HEADER_SIZE),
+        length: size - BOX_HEADER_SIZE,
+        type: buffer.readUInt32BE(offset + 4),
+      });
+
+      offset += size;
+    }
+  }
+
+  // Save a partial box to be completed by subsequent chunks.
+  private stash(partial: Buffer, boxSize: number): void {
+
+    this.boxSize = boxSize;
+    this.pending = [ partial ];
+    this.pendingLength = partial.length;
+  }
 }

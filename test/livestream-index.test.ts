@@ -1,17 +1,21 @@
 /* Copyright(C) 2019-2026, Mickael Palma / MP Consulting. Licensed under the MIT License.
  *
- * livestream-index.test.ts: Tests for the livestream connection pooling index logic from protect-livestream.ts.
+ * livestream-index.test.ts: Tests for the livestream connection pooling index in LivestreamManager (protect-livestream.ts).
  *
- * The getIndex() method determines how livestream connections are pooled by channel/lens.
+ * The private getIndex() method determines how livestream connections are pooled by channel/lens.
  */
+import type { ProtectCamera } from '../src/devices/index.js';
+import { LivestreamManager } from '../src/protect-livestream.js';
+import type { RtspEntry } from '../src/devices/protect-camera.js';
 
-// Reproduction of getIndex from LivestreamManager.
-function getIndex(rtspEntry: { channel: { id: number }; lens?: number }): { channel: number; index: string; lens: number | undefined } {
+type GetIndex = (rtspEntry: RtspEntry) => { channel: number; index: string; lens: number | undefined };
 
-  const channel = (rtspEntry.lens === undefined) ? rtspEntry.channel.id : 0;
-  const lens = rtspEntry.lens;
+// Call the real private LivestreamManager.getIndex(). It does not touch the camera.
+function getIndex(rtspEntry: { channel: { id: number }; lens?: number }): ReturnType<GetIndex> {
 
-  return { channel, index: channel.toString() + ((lens !== undefined) ? '.' + lens.toString() : ''), lens };
+  const manager = new LivestreamManager({} as ProtectCamera) as unknown as { getIndex: GetIndex };
+
+  return manager.getIndex(rtspEntry as RtspEntry);
 }
 
 describe('LivestreamManager getIndex', () => {

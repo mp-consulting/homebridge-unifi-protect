@@ -3,7 +3,8 @@
  *
  * fmp4-parsing.test.ts: Tests for the fMP4 (ISO BMFF) box parsing utilities.
  */
-import { BOX_HEADER_SIZE, findBox, hasAudioTrack, isKeyframe, splitMoofMdat } from '../src/lib/ffmpeg/fmp4.js';
+import { BOX_HEADER_SIZE, BOX_TYPE_MDAT, BOX_TYPE_MOOF, BOX_TYPE_MOOV, FMp4BoxReader, type FMp4ParsedBox, findBox, hasAudioTrack, isKeyframe,
+  splitMoofMdat } from '../src/lib/ffmpeg/fmp4.js';
 import { describe, expect, it } from 'vitest';
 
 // Construct an ISO BMFF box: a 32-bit big-endian size, a four-character type code, and the payload.
@@ -140,5 +141,81 @@ describe('splitMoofMdat', () => {
 
     expect(splitMoofMdat(box('moof', Buffer.alloc(4)))).toBeNull();
     expect(splitMoofMdat(Buffer.alloc(0))).toBeNull();
+  });
+});
+
+describe('FMp4BoxReader', () => {
+
+  const stream = Buffer.concat([ box('ftyp', Buffer.from('iso5')), box('moov', Buffer.alloc(37, 1)), box('moof', Buffer.alloc(19, 2)),
+    box('mdat', Buffer.alloc(301, 3)), box('free', Buffer.alloc(0)) ]);
+
+  // Feed a byte stream through a reader in the given chunk sizes (cycling through them), returning every box it produces reassembled into full boxes.
+  const feed = (input: Buffer, sizes: number[]): { boxes: FMp4ParsedBox[], ok: boolean } => {
+
+    const reader = new FMp4BoxReader();
+    const boxes: FMp4ParsedBox[] = [];
+    let ok = true;
+
+    for(let offset = 0, index = 0; offset < input.length; index++) {
+
+      const size = sizes[index % sizes.length] ?? input.length;
+
+      ok &&= reader.push(input.subarray(offset, offset + size), (parsed) => boxes.push(parsed));
+      offset += size;
+    }
+
+    return { boxes, ok };
+  };
+
+  const reassemble = (boxes: FMp4ParsedBox[]): Buffer => Buffer.concat(boxes.flatMap(parsed => [ parsed.header, parsed.data ]));
+
+  it('parses boxes delivered in a single chunk', () => {
+
+    const { boxes, ok } = feed(stream, [ stream.length ]);
+
+    expect(ok).toBe(true);
+    expect(boxes.map(parsed => parsed.type).slice(1, 4)).toEqual([ BOX_TYPE_MOOV, BOX_TYPE_MOOF, BOX_TYPE_MDAT ]);
+    expect(boxes.map(parsed => parsed.length)).toEqual([ 4, 37, 19, 301, 0 ]);
+    expect(reassemble(boxes)).toEqual(stream);
+  });
+
+  it('reassembles boxes split at every possible chunk size, including inside the header', () => {
+
+    for(let size = 1; size <= 64; size++) {
+
+      const { boxes, ok } = feed(stream, [ size ]);
+
+      expect(ok).toBe(true);
+      expect(boxes).toHaveLength(5);
+      expect(reassemble(boxes)).toEqual(stream);
+    }
+  });
+
+  it('reassembles boxes split at irregular offsets', () => {
+
+    const { boxes } = feed(stream, [ 3, 1, 7, 2, 50, 5, 200, 1, 13 ]);
+
+    expect(boxes).toHaveLength(5);
+    expect(reassemble(boxes)).toEqual(stream);
+  });
+
+  it('flags a box size below the header size as corruption', () => {
+
+    const corrupt = Buffer.alloc(BOX_HEADER_SIZE);
+
+    corrupt.write('free', 4, 'ascii');
+
+    const reader = new FMp4BoxReader();
+    const boxes: FMp4ParsedBox[] = [];
+
+    // A valid box ahead of the corruption is still delivered.
+    expect(reader.push(Buffer.concat([ box('ftyp', Buffer.alloc(4)), corrupt.subarray(0, 3) ]), (parsed) => boxes.push(parsed))).toBe(true);
+    expect(reader.push(corrupt.subarray(3), (parsed) => boxes.push(parsed))).toBe(false);
+    expect(reader.invalidBoxSize).toBe(0);
+    expect(boxes).toHaveLength(1);
+
+    // Resetting clears the corruption state.
+    reader.reset();
+    expect(reader.invalidBoxSize).toBeNull();
   });
 });

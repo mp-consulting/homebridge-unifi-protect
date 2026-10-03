@@ -7,8 +7,8 @@ import type { CharacteristicValue, PlatformAccessory, Resolution } from 'homebri
 import type { DeepPartial, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectEventAdd, ProtectEventPacket } from '../unifi/index.js';
 import { ProtectReservedNames } from '../protect-types.js';
 import { LivestreamManager } from '../protect-livestream.js';
-import type { MessageSwitchInterface } from './protect-doorbell.js';
 import type { Nullable } from '../lib/index.js';
+import type { ProtectAccessoryContext } from './protect-accessory-context.js';
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_FFMPEG_PROBESIZE, PROTECT_HOMEKIT_UPDATE_DELAY, PROTECT_TRANSCODE_BITRATE,
   PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE } from '../settings.js';
 import { ProtectCameraControls } from './protect-camera-controls.js';
@@ -62,16 +62,14 @@ function buildAudioFilterPipeline(fftNr: number, highpass?: number, lowpass?: nu
 
 export class ProtectCamera extends ProtectDevice {
 
-  private accessUnlockTimer?: NodeJS.Timeout;
+  private accessUnlockTimer?: NodeJS.Timeout | undefined;
   public readonly controls: ProtectCameraControls;
-  private isDeleted: boolean;
   public isRinging: boolean;
   public readonly livestream: LivestreamManager;
-  public messageSwitches: Record<string, MessageSwitchInterface | undefined>;
   public packageCamera?: Nullable<ProtectCameraPackage>;
   public readonly sensors: ProtectCameraSensors;
   public stream?: ProtectStreamingDelegate;
-  public ufp: ProtectCameraConfig;
+  public override ufp: ProtectCameraConfig;
   public readonly video: ProtectCameraVideo;
 
   // Create an instance.
@@ -80,10 +78,8 @@ export class ProtectCamera extends ProtectDevice {
     super(nvr, accessory);
 
     this.controls = new ProtectCameraControls(this);
-    this.isDeleted = false;
     this.isRinging = false;
     this.livestream = new LivestreamManager(this);
-    this.messageSwitches = {};
     this.sensors = new ProtectCameraSensors(this);
     this.ufp = device;
     this.video = new ProtectCameraVideo(this);
@@ -93,7 +89,7 @@ export class ProtectCamera extends ProtectDevice {
   }
 
   // Configure device-specific settings for this device.
-  protected configureHints(): boolean {
+  protected override configureHints(): boolean {
 
     // Configure our parent's hints.
     super.configureHints();
@@ -134,25 +130,23 @@ export class ProtectCamera extends ProtectDevice {
 
   // Initialize the accessory context with shared state: motion detection, HKSV recording, and NVR association. Returns the previously saved context for
   // subclasses that need to restore additional properties.
-  protected initializeContext(): Record<string, unknown> {
+  protected initializeContext(): ProtectAccessoryContext {
 
     // Save our context for reference before we recreate it.
-    const savedContext = this.accessory.context;
+    const savedContext = this.context;
 
     // Clean out the context object in case it's been polluted somehow.
-    this.accessory.context = {};
-    this.accessory.context.detectMotion = savedContext.detectMotion as boolean | undefined ?? true;
-    this.accessory.context.nvr = this.nvr.ufp.mac;
+    this.accessory.context = { detectMotion: savedContext.detectMotion ?? true, nvr: this.nvr.ufp.mac } satisfies ProtectAccessoryContext;
 
     if(this.hasFeature('Video.HKSV.Recording.Switch')) {
 
       // Compatibility with older releases. I'll remove this in the future.
       if(savedContext.hksvRecording !== undefined) {
 
-        this.accessory.context.hksvRecordingDisabled = !savedContext.hksvRecording;
+        this.context.hksvRecordingDisabled = !savedContext.hksvRecording;
       } else {
 
-        this.accessory.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled as boolean | undefined ?? false;
+        this.context.hksvRecordingDisabled = savedContext.hksvRecordingDisabled ?? false;
       }
     }
 
@@ -163,11 +157,12 @@ export class ProtectCamera extends ProtectDevice {
   protected configureDevice(): boolean {
 
     const savedContext = this.initializeContext();
-    this.accessory.context.mac = this.ufp.mac;
+
+    this.context.mac = this.ufp.mac;
 
     if(this.hasFeature('Doorbell.Mute')) {
 
-      this.accessory.context.doorbellMuted = savedContext.doorbellMuted as boolean | undefined ?? false;
+      this.context.doorbellMuted = savedContext.doorbellMuted ?? false;
     }
 
     // Inform the user that motion detection will suck.
@@ -229,19 +224,20 @@ export class ProtectCamera extends ProtectDevice {
       this.configureDoorbellTrigger();
 
       // Listen for events.
-      this.nvr.events.on('addEvent.' + this.ufp.id, this.listeners['addEvent.' + this.ufp.id] = this.addEventHandler.bind(this));
-      this.nvr.events.on('updateEvent.' + this.ufp.id, this.listeners['updateEvent.' + this.ufp.id] = this.eventHandler.bind(this));
+      this.subscribe('addEvent.' + this.ufp.id, (packet) => this.addEventHandler(packet));
+      this.subscribe('updateEvent.' + this.ufp.id, (packet) => this.eventHandler(packet));
     })().catch((error: unknown) => this.log.error('Error configuring camera: %s.', error));
 
     return true;
   }
 
   // Cleanup after ourselves if we're being deleted.
-  public cleanup(): void {
+  public override cleanup(): void {
 
     // Clean up delegates.
     this.sensors.cleanup();
     clearTimeout(this.accessUnlockTimer);
+    this.accessUnlockTimer = undefined;
 
     // If we've got HomeKit Secure Video enabled and recording, disable it.
     if(this.stream?.hksv?.isRecording) {
@@ -259,8 +255,6 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     super.cleanup();
-
-    this.isDeleted = true;
   }
 
   // Handle update-related events from the controller.
@@ -403,7 +397,7 @@ export class ProtectCamera extends ProtectDevice {
     if(!this.validService(this.hap.Service.Switch, this.hasFeature('Doorbell.Mute'), ProtectReservedNames.SWITCH_DOORBELL_MUTE) ||
       !this.accessory.getService(this.hap.Service.Doorbell)) {
 
-      delete this.accessory.context.doorbellMuted;
+      delete this.context.doorbellMuted;
 
       return false;
     }
@@ -420,17 +414,17 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Configure the switch.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.accessory.context.doorbellMuted as boolean);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !!this.context.doorbellMuted);
 
     service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
 
-      this.accessory.context.doorbellMuted = !!value;
+      this.context.doorbellMuted = !!value;
 
       this.log.info('Doorbell chime %s.', value ? 'disabled' : 'enabled');
     });
 
     // Initialize the switch.
-    service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.doorbellMuted as boolean);
+    service.updateCharacteristic(this.hap.Characteristic.On, !!this.context.doorbellMuted);
 
     this.log.info('Enabling doorbell mute switch.');
 
@@ -594,7 +588,7 @@ export class ProtectCamera extends ProtectDevice {
     if(!this.validService(this.hap.Service.Switch, this.hasFeature('Video.HKSV.Recording.Switch'), ProtectReservedNames.SWITCH_HKSV_RECORDING)) {
 
       // Remove our stateful context since it's unneeded.
-      delete this.accessory.context.hksvRecordingDisabled;
+      delete this.context.hksvRecordingDisabled;
 
       return false;
     }
@@ -611,20 +605,20 @@ export class ProtectCamera extends ProtectDevice {
     }
 
     // Activate or deactivate HKSV recording.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !this.accessory.context.hksvRecordingDisabled);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !this.context.hksvRecordingDisabled);
 
     service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
 
-      if(this.accessory.context.hksvRecordingDisabled !== !value) {
+      if(this.context.hksvRecordingDisabled !== !value) {
 
         this.log.info('HKSV event recording %s.', value ? 'enabled' : 'disabled');
       }
 
-      this.accessory.context.hksvRecordingDisabled = !value;
+      this.context.hksvRecordingDisabled = !value;
     });
 
     // Initialize the switch.
-    service.updateCharacteristic(this.hap.Characteristic.On, !(this.accessory.context.hksvRecordingDisabled as boolean));
+    service.updateCharacteristic(this.hap.Characteristic.On, !this.context.hksvRecordingDisabled);
 
     this.log.info('Enabling HKSV recording switch.');
 

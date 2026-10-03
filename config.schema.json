@@ -67,6 +67,14 @@
               "description": "The base MQTT topic to publish to. Default: unifi/protect."
             },
 
+            "mqttVerifyTls": {
+              "type": "boolean",
+              "title": "Verify MQTT Broker TLS Certificate",
+              "required": false,
+              "default": true,
+              "description": "Validate the MQTT broker's TLS certificate when connecting over mqtts:// or ssl://. Only disable this if your broker uses a self-signed certificate. Default: enabled."
+            },
+
             "mqttUrl": {
               "type": "string",
               "title": "MQTT Broker URL",
@@ -176,6 +184,22 @@
               "description": "UniFi Protect password for this controller. Creating a homebridge-specific local user is strongly encouraged for security and sanity."
             },
 
+            "playlistAddress": {
+              "type": "string",
+              "title": "M3U Playlist Bind Address",
+              "required": false,
+              "placeholder": "e.g. 127.0.0.1",
+              "description": "Local IP address the M3U playlist service (Nvr.Service.Playlist feature option) listens on. Default: all interfaces."
+            },
+
+            "playlistToken": {
+              "type": "string",
+              "title": "M3U Playlist Access Token",
+              "required": false,
+              "placeholder": "e.g. a-long-random-string",
+              "description": "When set, clients must request the M3U playlist with ?token=<value> in the URL. Without a token, anyone who can reach the playlist port can retrieve your camera stream URLs."
+            },
+
             "username": {
               "type": "string",
               "title": "Controller Username",
@@ -188,10 +212,18 @@
               "type": "boolean",
               "title": "Verify TLS Certificate",
               "required": false,
-              "description": "Validate the controller's TLS certificate when connecting. Leave this disabled unless your controller uses a certificate signed by a trusted certificate authority - UniFi controllers use self-signed certificates by default. Default: disabled."
+              "description": "Validate the controller's TLS certificate against trusted certificate authorities when connecting. Leave this disabled unless your controller uses a certificate signed by a trusted certificate authority - UniFi controllers use self-signed certificates by default. When disabled, the controller's certificate is pinned the first time HBUP connects, and connections presenting a different certificate are refused. Default: disabled."
             }
           }
         }
+      },
+
+      "debug": {
+
+        "type": "boolean",
+        "title": "Debug Logging",
+        "required": false,
+        "description": "Enable debug logging for this plugin. This creates a large volume of log output and should only be used when troubleshooting. Default: false."
       },
 
       "name": {
@@ -302,7 +334,9 @@
                   "items": [
                     "controllers[].name",
                     "controllers[].overrideAddress",
-                    "controllers[].verifyTls"
+                    "controllers[].verifyTls",
+                    "controllers[].playlistAddress",
+                    "controllers[].playlistToken"
                   ]
                 }
               ]
@@ -318,7 +352,8 @@
                   "description": "MQTT support will only be enabled if an MQTT broker URL is specified below.",
                   "items": [
                     "controllers[].mqttUrl",
-                    "controllers[].mqttTopic"
+                    "controllers[].mqttTopic",
+                    "controllers[].mqttVerifyTls"
                   ]
                 }
               ]
@@ -360,7 +395,8 @@
             "name",
             "videoProcessor",
             "verboseFfmpeg",
-            "ringDelay"
+            "ringDelay",
+            "debug"
           ]
         }
       ]

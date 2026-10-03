@@ -27,6 +27,7 @@ This is a complete reference of the HBUP settings JSON. The defaults should work
     "videoProcessor": "/usr/local/bin/ffmpeg",
     "verboseFfmpeg": false,
     "ringDelay": 0,
+    "debug": false,
 
     "options": [
       "Enable.Motion.Switch"
@@ -46,7 +47,10 @@ This is a complete reference of the HBUP settings JSON. The defaults should work
           }
         ],
         "mqttUrl": "mqtt://test.mosquitto.org",
-        "mqttTopic": "unifi/protect"
+        "mqttTopic": "unifi/protect",
+        "verifyTls": false,
+        "playlistAddress": "127.0.0.1",
+        "playlistToken": "some-long-random-string"
       }
     ]
   }
@@ -68,3 +72,19 @@ This is a complete reference of the HBUP settings JSON. The defaults should work
 | mqttUrl                | The URL of your MQTT broker. **This must be in URL form**, e.g.: `mqtt://user:password@1.2.3.4`. |                                              | No       |
 | mqttTopic              | The base topic to use when publishing MQTT messages.    | "unifi/protect"                                                                       | No       |
 | verboseFfmpeg          | Enable additional logging for video streaming.          | false                                                                                 | No       |
+| debug                  | Enable debug logging. This produces a large volume of log output and should only be used when troubleshooting. | false                          | No       |
+| verifyTls              | Validate the controller's TLS certificate against trusted certificate authorities. Only enable this if your controller uses a certificate signed by a trusted authority. See [TLS certificate pinning](#tls-pinning). | false | No |
+| playlistAddress        | Local IP address the M3U playlist service (the `Nvr.Service.Playlist` [feature option](https://github.com/mp-consulting/homebridge-unifi-protect/blob/main/docs/feature-options.md)) listens on. | all interfaces | No |
+| playlistToken          | Access token required to retrieve the M3U playlist. When set, clients must request the playlist using `http://<homebridge>:<port>/?token=<playlistToken>`. |                | No       |
+
+### <A NAME="tls-pinning"></A>TLS Certificate Pinning
+UniFi Protect controllers ship with self-signed TLS certificates, which can't be validated against a certificate authority. Unless you enable `verifyTls`, HBUP uses *trust on first use* instead: the first time it connects to a controller, it records the SHA-256 fingerprint of the controller's certificate and logs it. On every subsequent connection, the certificate must match that fingerprint - if it doesn't, HBUP refuses to connect before sending your login credentials, and logs an error showing the expected and received fingerprints.
+
+Pinned fingerprints are stored per controller address in `unifi-protect-tls-pins.json` in your Homebridge storage directory (typically `~/.homebridge`).
+
+If you have intentionally replaced the certificate on your controller, or a controller update regenerated it, you'll need to reset the pin: remove the entry for that controller's address from `unifi-protect-tls-pins.json` (or delete the file entirely to reset all controllers) and restart Homebridge. HBUP will then trust and pin the new certificate. If you did not expect the certificate to change, investigate before resetting the pin - a mismatch can indicate that someone is intercepting traffic between Homebridge and your controller.
+
+Pinning protects every connection to the controller: HTTPS API requests (including login), and the realtime events, livestream, and two-way audio WebSocket connections. No credentials or session cookies are sent until the controller's certificate has been checked.
+
+### <A NAME="playlist"></A>M3U Playlist Access
+When the `Nvr.Service.Playlist` feature option is enabled, HBUP publishes an M3U playlist containing the RTSP stream URLs of your cameras. By default, it listens on all network interfaces and anyone who can reach the port can retrieve the playlist - HBUP logs a warning at startup when no access token is configured. To restrict access, set `playlistToken` and point your playlist app (e.g. Channels DVR) at `http://<homebridge>:<port>/?token=<playlistToken>`, and optionally set `playlistAddress` to limit which interface the service listens on.

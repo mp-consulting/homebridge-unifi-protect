@@ -5,6 +5,7 @@
  */
 import type { CharacteristicValue, PlatformAccessory } from 'homebridge';
 import { acquireService, validService } from '../lib/index.js';
+import { type ProtectAccessoryContext, accessoryContext } from './protect-accessory-context.js';
 import { ProtectBase } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';
 import { ProtectReservedNames } from '../protect-types.js';
@@ -28,18 +29,11 @@ export class ProtectSecuritySystem extends ProtectBase {
   // Configure a security system accessory for HomeKit.
   private configureDevice(): boolean {
 
-    let securityState: CharacteristicValue = this.hap.Characteristic.SecuritySystemCurrentState.STAY_ARM;
-
     // Save the security system state before we wipeout the context.
-    if(this.accessory.context.securityState !== undefined) {
-
-      securityState = this.accessory.context.securityState as CharacteristicValue;
-    }
+    const securityState = this.context.securityState ?? this.hap.Characteristic.SecuritySystemCurrentState.STAY_ARM;
 
     // Clean out the context object in case it's been polluted somehow.
-    this.accessory.context = {};
-    this.accessory.context.nvr = this.nvr.ufp.mac;
-    this.accessory.context.securityState = securityState;
+    this.accessory.context = { nvr: this.nvr.ufp.mac, securityState: securityState } satisfies ProtectAccessoryContext;
 
     // Configure accessory information.
     this.configureInfo();
@@ -178,7 +172,7 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     let targetSecurityState: CharacteristicValue;
 
-    switch(this.accessory.context.securityState) {
+    switch(this.context.securityState) {
 
       case SecuritySystemCurrentState.STAY_ARM:
 
@@ -207,12 +201,12 @@ export class ProtectSecuritySystem extends ProtectBase {
     }
 
     // Handlers to get our current state, and initialize on startup.
-    service.updateCharacteristic(SecuritySystemCurrentState, this.accessory.context.securityState as CharacteristicValue)
+    service.updateCharacteristic(SecuritySystemCurrentState, this.securityState)
       .getCharacteristic(SecuritySystemCurrentState).onGet(() => {
 
         return this.isAlarmTriggered ?
           this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED :
-          (this.accessory.context.securityState as CharacteristicValue);
+          (this.securityState);
       });
 
     // Handlers for triggering a change in the security system state.
@@ -315,14 +309,14 @@ export class ProtectSecuritySystem extends ProtectBase {
       [this.hap.Characteristic.SecuritySystemCurrentState.STAY_ARM]: 'Home',
     };
 
-    return this.isAlarmTriggered ? 'Alarm' : securitySystemCurrentState[this.accessory.context.securityState as number] ?? 'Off';
+    return this.isAlarmTriggered ? 'Alarm' : securitySystemCurrentState[this.securityState] ?? 'Off';
   }
 
   // Change the security system state, and enable or disable motion detection accordingly.
   private setSecurityState(value: CharacteristicValue): void {
 
     const liveviews = this.nvr.ufpApi.bootstrap?.liveviews;
-    let newState: CharacteristicValue;
+    let newState: number;
     const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
     const SecuritySystemTargetState = this.hap.Characteristic.SecuritySystemTargetState;
     let viewScene = '';
@@ -383,7 +377,7 @@ export class ProtectSecuritySystem extends ProtectBase {
 
       this.log.info('No liveview configured for this security system state. Create a liveview named %s in the Protect webUI to use this feature.', viewScene);
 
-      this.accessory.context.securityState = newState;
+      this.context.securityState = newState;
       this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
 
       return;
@@ -397,7 +391,7 @@ export class ProtectSecuritySystem extends ProtectBase {
       const targetUfp = this.nvr.configuredDevices[targetAccessory.UUID]?.ufp;
 
       // We only want accessories associated with this Protect controller.
-      if(!targetUfp || (targetAccessory.context.nvr !== this.nvr.ufp.mac)) {
+      if(!targetUfp || (accessoryContext(targetAccessory).nvr !== this.nvr.ufp.mac)) {
 
         continue;
       }
@@ -413,25 +407,27 @@ export class ProtectSecuritySystem extends ProtectBase {
       }
 
       // Only take action to change motion detection state if needed.
-      if(targetAccessory.context.detectMotion !== targetState) {
+      const targetContext = accessoryContext(targetAccessory);
 
-        targetAccessory.context.detectMotion = targetState;
+      if(targetContext.detectMotion !== targetState) {
+
+        targetContext.detectMotion = targetState;
 
         // Update the switch service, if present.
         const motionSwitch = targetAccessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
         if(motionSwitch) {
 
-          motionSwitch.updateCharacteristic(this.hap.Characteristic.On, targetAccessory.context.detectMotion as boolean);
+          motionSwitch.updateCharacteristic(this.hap.Characteristic.On, targetState);
         }
 
         this.log.info('%s -> %s: Motion detection %s.', viewScene, targetAccessory.displayName,
-          targetAccessory.context.detectMotion === true ? 'enabled' : 'disabled');
+          targetState ? 'enabled' : 'disabled');
       }
     }
 
     // Inform the user of our new state.
-    this.accessory.context.securityState = newState;
+    this.context.securityState = newState;
     this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
 
     // Reset our alarm state and update our alarm switch.
@@ -460,12 +456,24 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     // Update the security system state.
     this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(this.hap.Characteristic.SecuritySystemCurrentState,
-      this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : this.accessory.context.securityState as CharacteristicValue);
+      this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : this.securityState);
 
     // Update the security alarm state.
     this.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
 
     // Publish to MQTT, if configured.
     this.nvr.mqtt?.publish(this.nvr.ufp.mac, 'securitysystem', this.currentSecuritySystemState);
+  }
+
+  // Return a typed view of the persistent accessory context.
+  private get context(): ProtectAccessoryContext {
+
+    return accessoryContext(this.accessory);
+  }
+
+  // Return the current security system state.
+  private get securityState(): number {
+
+    return this.context.securityState ?? this.hap.Characteristic.SecuritySystemCurrentState.DISARMED;
   }
 }
