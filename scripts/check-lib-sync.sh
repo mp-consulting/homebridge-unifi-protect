@@ -13,6 +13,12 @@ set -euo pipefail
 SIBLING="${1:-mp-consulting/homebridge-unifi-access}"
 BRANCH="${2:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-main}}}"
 
+# Dependabot opens identically-named branches in both repositories, each cut from its own main at a different time, so pairing them compares against a stale
+# sibling. Dependabot never touches src/lib, so its branches always compare against the sibling's main.
+case "$BRANCH" in
+  dependabot/*) BRANCH="main" ;;
+esac
+
 # The shared library files that must stay in sync across both repositories.
 FILES=(featureoptions.ts mqtt-connection.ts mqttclient.ts request.ts service.ts ui-server.ts util.ts websocket.ts)
 
