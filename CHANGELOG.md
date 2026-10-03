@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [1.3.0] - 2026-10-03
+
+> **Action required for some users**
+> - **MQTT**: TLS certificates of `mqtts://` and `ssl://` brokers are now verified. If your broker uses a self-signed certificate, set `mqttVerifyTls` to `false` for that controller.
+> - **Controller certificate**: the plugin now pins your controller's certificate the first time it connects. If you later regenerate the certificate, remove the controller's entry from `unifi-protect-tls-pins.json` in your Homebridge storage directory and restart Homebridge.
+
+### Security
+
+- **Controller certificates are pinned on first use**: UniFi controllers ship with self-signed certificates, so unless `verifyTls` was enabled the plugin accepted any certificate, letting anyone able to intercept the connection collect your controller credentials. The plugin now stores the certificate's SHA-256 fingerprint the first time it connects and refuses to connect - before sending any credentials or session cookies - if a different certificate is presented later. This covers API requests and the realtime events, livestream, and two-way audio connections.
+- **MQTT broker certificates are now verified**: connections to `mqtts://` and `ssl://` brokers skipped certificate validation entirely. Certificates are now validated by default, with the new `mqttVerifyTls` setting to opt out.
+- **Credentials are no longer logged**: broker URLs in MQTT error messages and RTSP URLs in FFmpeg command lines are now redacted.
+- **Settings UI hardening**: the snapshot preview could be used to fetch arbitrary URLs from the Homebridge host, including loopback and cloud metadata addresses. It now only fetches images from permitted hosts, with a size cap. ONVIF discovery no longer sends your camera credentials to hosts other than the one you entered, and concurrent controller lookups no longer share session state.
+- **Playlist server**: new `playlistAddress` and `playlistToken` controller settings let you restrict which interface the M3U playlist listens on and require a token to retrieve it. Camera names can no longer inject playlist entries. Without a token, a startup warning explains that the playlist exposes stream URLs to your network.
+- **Hardened network parsing**: decompressed event payloads and third-party snapshot downloads are capped in size.
+
+### Fixed
+
+- **Disabling a controller removed accessories too early**: the plugin waited 30 milliseconds instead of 30 seconds for cached accessories to load before removing them.
+- **Memory growth over time**: state for every event received from the controller was kept forever. Only device state is kept now. Adopting a device the plugin hadn't seen state for no longer crashes.
+- **Package camera flashlight kept running**: after a doorbell was removed, its package camera flashlight kept calling the controller every 20 seconds.
+- **Livestream restarts**: a restart could reopen a livestream that had since been stopped or removed, and a failed camera reboot left the livestream permanently stuck.
+- **Failed HomeKit changes looked successful**: when the controller rejected a change (lights, recording mode, night vision, chimes, LCD messages, and more), HomeKit still showed it as applied. HomeKit now reports the failure and reverts the control.
+- **Doorbell settings were lost at startup**: the digital chime duration and LCD message settings were reset after the doorbell was set up, so the digital chime switch sent no duration and message switches stopped updating.
+- **Occupancy was re-announced on every motion event**: while a space stayed occupied, each motion event logged and published occupancy again.
+- **Decimal feature option values**: a value such as `Enable.Audio.Filter.Noise.FftNr.12.5` was misread. Decimal values are now read correctly at every scope.
+- **Stability**: a two-way audio session or stream stopped while starting up, or a livestream torn down while restarting, could throw an error.
+
+### Changed
+
+- **Performance**: fewer buffer copies on the HomeKit Secure Video livestream path, faster recording reassembly, a bounded FFmpeg error log, a short-lived snapshot cache that avoids starting FFmpeg for repeated snapshot requests, and the accessory cache is only written when something actually changed.
+- **Documentation**: added TLS certificate pinning and the new controller settings, and corrected the supported MQTT broker URL schemes.
+- **Development**: `npm run watch` uses Node's built-in watch mode instead of nodemon. Tests are type-checked and coverage thresholds are enforced in CI.
+
 ## [1.2.7] - 2026-10-03
 
 ### Changed
