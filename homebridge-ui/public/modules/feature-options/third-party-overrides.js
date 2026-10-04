@@ -6,6 +6,7 @@
  */
 import { $ } from '../dom-helpers.js';
 import { saveConfigSilent, state } from '../state.js';
+import { clearExplain, renderExplain, scrubText } from '../assistant.js';
 
 // Match the MAC normalization used by findCameraOverride() in src/protect-options.ts.
 const normalizeMac = (mac) => (mac || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
@@ -127,6 +128,7 @@ export const renderThirdPartyOverridesPanel = (scope) => {
   }
 
   panel.style.display = 'block';
+  clearExplain($('thirdPartyDiscoverAssistant'));
 
   // Apply persisted open/closed state. Default closed to match the category cards below.
   applyThirdPartyPanelOpenState(body, toggle);
@@ -191,6 +193,16 @@ const discoverOnvifAndPopulate = async (mac) => {
   discoverBtn.disabled = true;
   status.textContent = 'Discovering…';
   status.className = 'small flex-grow-1 text-muted';
+  clearExplain($('thirdPartyDiscoverAssistant'));
+
+  // Explain a failed ONVIF discovery. The camera address and credentials are never sent; IPs and MACs in the error are scrubbed.
+  const explainDiscovery = (message) => renderExplain($('thirdPartyDiscoverAssistant'), {
+
+    context: 'Discovering the RTSP and snapshot URLs of a third-party camera over ONVIF from the plugin webUI failed. Service path: ' +
+      (servicePath ? 'custom' : 'default (/onvif/device_service)') + '. Port: ' + (onvifPort.value ? 'set by the user' : 'automatic') + '.',
+    error: scrubText(message, [ host ]),
+    title: 'Why did ONVIF discovery fail?',
+  });
 
   try {
 
@@ -207,6 +219,7 @@ const discoverOnvifAndPopulate = async (mac) => {
 
       status.textContent = 'Discovery failed: ' + (result?.error || 'unknown error');
       status.className = 'small flex-grow-1 text-danger';
+      explainDiscovery(status.textContent);
 
       return;
     }
@@ -242,6 +255,7 @@ const discoverOnvifAndPopulate = async (mac) => {
 
     status.textContent = 'Discovery failed: ' + (err?.message || err);
     status.className = 'small flex-grow-1 text-danger';
+    explainDiscovery(status.textContent);
   } finally {
 
     discoverBtn.disabled = false;

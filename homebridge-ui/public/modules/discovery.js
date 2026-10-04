@@ -5,7 +5,11 @@
  */
 import { $, escapeHtml } from './dom-helpers.js';
 import { getControllers } from './state.js';
+import { renderExplain, scrubText } from './assistant.js';
 import { openAddController } from './controllers.js';
+
+const DISCOVERY_CONTEXT = 'Discovering UniFi consoles from the plugin webUI with the Ubiquiti discovery protocol (UDP port 10001 broadcast on the local ' +
+  'subnets plus a unicast scan of nearby /24 subnets, 5 seconds).';
 
 export const handleDiscover = async () => {
 
@@ -38,6 +42,17 @@ export const handleDiscover = async () => {
 
 
       container.innerHTML = `<div class="alert alert-${devices.length ? 'success' : 'warning'}">${msg}</div>`;
+
+      if(!devices.length) {
+
+        renderExplain(container.appendChild(document.createElement('div')), {
+
+          context: DISCOVERY_CONTEXT,
+          error: msg,
+          title: 'Why was no controller found?',
+        });
+      }
+
       listDiv.style.display = 'block';
     } else {
 
@@ -52,6 +67,12 @@ export const handleDiscover = async () => {
 
 
     container.innerHTML = `<div class="alert alert-danger">Discovery error: ${escapeHtml(e.message)}</div>`;
+    renderExplain(container.appendChild(document.createElement('div')), {
+
+      context: DISCOVERY_CONTEXT,
+      error: scrubText('Discovery error: ' + e.message),
+      title: 'Why did discovery fail?',
+    });
     listDiv.style.display = 'block';
   } finally {
 

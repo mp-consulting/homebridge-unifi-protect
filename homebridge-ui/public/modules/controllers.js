@@ -4,6 +4,7 @@
  * controllers.js: Controller management UI.
  */
 import { $, el, escapeHtml, setButtonLoading, showScreen } from './dom-helpers.js';
+import { assistantController, renderExplain, scrubText } from './assistant.js';
 import { getControllers, saveConfig, state } from './state.js';
 import { openFeatureOptions } from './feature-options.js';
 
@@ -51,6 +52,7 @@ export const renderControllers = () => {
           <button class="btn btn-sm btn-danger delete-ctrl-btn"><i class="bi bi-trash"></i></button>
         </div>
       </div>
+      <div class="assistant-slot mt-2" style="display: none;"></div>
     `;
 
 
@@ -84,6 +86,18 @@ export const renderControllers = () => {
     homebridge.request('/checkStatus', { address: ctrl.address }).then((result) => {
 
       updateBadge(result?.online ? 'success' : 'danger', result?.online ? 'check-circle' : 'x-circle', result?.online ? 'Online' : 'Offline');
+
+      if(!result?.online) {
+
+        renderExplain(li.querySelector('.assistant-slot'), {
+
+          context: 'The user is looking at the list of configured UniFi Protect controllers in the plugin webUI.',
+          device: assistantController(ctrl),
+          error: 'The controller did not answer an HTTPS request on port 443 within 5 seconds (status check from the Homebridge server; loopback and ' +
+            'link-local addresses are refused), so it is shown as Offline.',
+          title: 'Why is ' + (ctrl.name || 'this controller') + ' offline?',
+        });
+      }
     }).catch(() => {
 
       updateBadge('warning', 'question-circle', 'Unknown');
@@ -153,6 +167,16 @@ export const handleSetupSubmit = async (event) => {
 
   setButtonLoading(btn, true, 'Validating...');
   $('setupError').style.display = 'none';
+  $('setupAssistant').replaceChildren();
+
+  // Explain a failed connection, with the controller address, IPs and MACs scrubbed and only whitelisted settings.
+  const explainSetupError = (message) => renderExplain($('setupAssistant'), {
+
+    context: 'Logging in to the UniFi Protect controller and loading its devices (bootstrap, 20 second limit) from the plugin webUI failed.',
+    device: assistantController({ verifyTls }),
+    error: scrubText(message, [ address ]),
+    title: 'Why can the controller not be reached?',
+  });
 
   try {
 
@@ -169,6 +193,7 @@ export const handleSetupSubmit = async (event) => {
 
       $('setupErrorText').textContent = 'Unable to connect. ' + (errorDetail || 'Check your address and credentials.');
       $('setupError').style.display = 'block';
+      explainSetupError($('setupErrorText').textContent);
       setButtonLoading(btn, false);
 
       return;
@@ -206,6 +231,7 @@ export const handleSetupSubmit = async (event) => {
 
     $('setupErrorText').textContent = 'Error: ' + e.message;
     $('setupError').style.display = 'block';
+    explainSetupError($('setupErrorText').textContent);
   } finally {
 
 

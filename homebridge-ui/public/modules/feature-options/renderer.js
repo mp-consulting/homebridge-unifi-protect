@@ -7,6 +7,7 @@ import { $, escapeAttr, escapeHtml, showScreen } from '../dom-helpers.js';
 import { CATEGORY_COLORS, CATEGORY_ICONS } from '../constants.js';
 import { buildScopeSelector, getCurrentScope, updateCascade } from './scope.js';
 import { countEnabled, countModified, getOptionState, isOptionModified } from './option-state.js';
+import { assistantController, assistantDevice, deviceProblem, renderExplain, scrubText } from '../assistant.js';
 import { getControllers, saveConfigSilent, state } from '../state.js';
 import { renderThirdPartyOverridesPanel } from './third-party-overrides.js';
 
@@ -101,6 +102,30 @@ const validOption = (device, option) => {
   return true;
 };
 
+// Show a controller connection error above the options, with an "Explain" button when the Assistant is on.
+const showOptionsProblem = (ctrl, message) => {
+
+  const container = $('optionsProblem');
+  const alert = document.createElement('div');
+  const text = document.createElement('div');
+  const slot = document.createElement('div');
+
+  alert.className = 'alert alert-danger mb-0';
+  text.textContent = message;
+  slot.className = 'mt-2';
+  alert.append(text, slot);
+  container.replaceChildren(alert);
+  container.style.display = 'block';
+
+  renderExplain(slot, {
+
+    context: 'Loading the devices of a configured UniFi Protect controller for the feature options screen of the plugin webUI failed.',
+    device: assistantController(ctrl),
+    error: scrubText(message, [ ctrl?.address ]),
+    title: 'Why can the devices not be loaded?',
+  });
+};
+
 export const openFeatureOptions = async (controllerIndex) => {
 
 
@@ -114,13 +139,19 @@ export const openFeatureOptions = async (controllerIndex) => {
   $('thirdPartyOverridesPanel').style.display = 'none';
   $('unsavedChanges').style.display = 'none';
   $('optionsSearch').value = '';
+  $('optionsProblem').style.display = 'none';
+  $('optionsProblem').replaceChildren();
 
   try {
 
 
+    // Tagged so /getErrorMessage hands back this request's error even if another validation is in flight.
+    const requestId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
     const [ optionsData, devices ] = await Promise.all([
       homebridge.request('/getOptions'),
-      homebridge.request('/getDevices', { address: ctrl.address, password: ctrl.password, username: ctrl.username, verifyTls: ctrl.verifyTls === true }),
+      homebridge.request('/getDevices', {
+        address: ctrl.address, password: ctrl.password, requestId, username: ctrl.username, verifyTls: ctrl.verifyTls === true,
+      }),
     ]);
 
     state.categories = optionsData.categories;
@@ -138,12 +169,20 @@ export const openFeatureOptions = async (controllerIndex) => {
       }
     }
 
+    if(!devices?.length) {
+
+      const errorDetail = await homebridge.request('/getErrorMessage', { requestId });
+
+      showOptionsProblem(ctrl, 'Unable to load the devices of this controller. ' + (errorDetail || 'Check its address and credentials.'));
+    }
+
     buildScopeSelector(ctrl);
     renderOptions();
   } catch(e) {
 
 
     homebridge.toast.error('Failed to load: ' + e.message);
+    showOptionsProblem(ctrl, 'Failed to load: ' + e.message);
   } finally {
 
 
@@ -184,6 +223,23 @@ export const renderOptions = () => {
 
       statusEl.textContent = 'Connected';
       statusEl.className = 'text-success';
+    }
+
+    const problem = deviceProblem(scope.device);
+
+    if(problem) {
+
+      renderExplain($('infoAssistant'), {
+
+        context: 'The user is looking at the feature options of a UniFi Protect device in the plugin webUI.',
+        device: assistantDevice(scope.device),
+        error: problem,
+        title: 'Why is ' + (scope.device.name || 'this device') + ' not connected?',
+      });
+    } else {
+
+      $('infoAssistant').style.display = 'none';
+      $('infoAssistant').replaceChildren();
     }
   } else {
 

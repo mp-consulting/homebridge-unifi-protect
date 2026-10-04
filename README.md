@@ -29,6 +29,7 @@ A [Homebridge](https://homebridge.io) plugin that brings native HomeKit support 
 - **[MQTT integration](docs/mqtt.md)** — publish realtime events to any MQTT broker.
 - **UniFi Access lock control** — unlock Access-paired doors directly from HomeKit.
 - **Multi-controller** — connect multiple Protect controllers in a single plugin instance.
+- **[Assistant](#assistant) (optional)** — explains controller connection, device and ONVIF discovery problems in the webUI, using the AI provider you set up in Homebridge AI Kit.
 
 ## Requirements
 
@@ -92,6 +93,38 @@ For detailed setup instructions, see the [Getting Started](docs/getting-started.
 | **[Realtime Events API](docs/events.md)** | Protocol internals and event processing pipeline |
 | **[Changelog](CHANGELOG.md)** | Release history |
 
+## Assistant
+
+The webUI can explain problems with the **Assistant**. It is off until you set up an AI
+provider once for all MP Consulting plugins in
+[Homebridge AI Kit](https://github.com/mp-consulting/homebridge-ai-kit) (or the Homebridge
+Glass UI): the plugin reads the shared `HomebridgeAiKit` platform block from `config.json`
+and has no AI settings of its own. When it is not set up, the webUI looks exactly as before,
+with a small tip under the list of controllers.
+
+When it is enabled, an **Explain** button appears next to:
+
+- a controller that fails to connect when you add or edit it (login, privileges, timeout,
+  unreachable or refused address),
+- a controller shown as **Offline** in the controller list,
+- an empty or failed discovery,
+- a controller whose devices cannot be loaded on the feature options screen,
+- a device that is not connected or is updating, on the feature options screen,
+- a failed ONVIF discovery for a third-party camera.
+
+The answer streams into an Assistant panel below, with UniFi Protect context (local users and
+roles, the plugin's error messages, TLS pinning, discovery, ONVIF, streaming).
+
+What is sent to the provider: the error message with the controller or camera address, IP
+addresses and MAC addresses replaced by placeholders; for a controller only its name and
+whether TLS verification is on; for a device its name, model, type, firmware, connection
+type and state flags. The controller address, username and password, camera (ONVIF)
+addresses and credentials, and device IP addresses, MAC addresses and IDs are never sent, and
+the provider's API key stays on the Homebridge server.
+
+There is no "Describe Your Setup" here: the configuration is the list of controllers (with
+credentials), camera overrides and feature options, which the webUI manages.
+
 ## Supported Devices
 
 All generally available UniFi Protect hardware is supported:
@@ -146,6 +179,12 @@ npm install
 npm run build
 npm test
 ```
+
+The build vendors `@mp-consulting/homebridge-ui-kit` and Bootstrap into
+`homebridge-ui/public/lib/` with `mp-ui-kit-copy --vendor`. Until
+`@mp-consulting/homebridge-ai-kit` 2.0.0 and `@mp-consulting/homebridge-ui-kit` 1.2.0
+are published, both are installed from sibling checkouts (`file:../homebridge-mcp-server`
+and `file:../homebridge-ui-kit`); they must become `^2.0.0` and `^1.2.0` before release.
 
 ## License
 

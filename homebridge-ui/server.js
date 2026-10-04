@@ -8,6 +8,7 @@
 import { featureOptionCategories, featureOptions } from '../dist/protect-options.js';
 import { HomebridgePluginUiServer } from '../dist/lib/ui-server.js';
 import { ProtectApi } from '../dist/unifi/index.js';
+import { registerAssistant } from './assistant.js';
 import { discoverOnvifEndpoints } from './onvif.js';
 import dgram from 'node:dgram';
 import dns from 'node:dns/promises';
@@ -319,6 +320,9 @@ export class PluginUiServer extends HomebridgePluginUiServer {
 
     // Register fetchSnapshot() with the Homebridge server API.
     this.#registerFetchSnapshot();
+
+    // Assistant: /ai/status, /ai/explain, /ai/ask, /ai/config (configured in Homebridge AI Kit).
+    registerAssistant(this);
 
     this.ready();
   }

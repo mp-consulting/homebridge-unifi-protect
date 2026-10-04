@@ -7,6 +7,7 @@ import { $, showScreen } from './modules/dom-helpers.js';
 import { getControllers, state } from './modules/state.js';
 import { handleSetupSubmit, openAddController, renderControllers } from './modules/controllers.js';
 import { PLUGIN_NAME } from './modules/constants.js';
+import { assistant, initAssistant } from './modules/assistant.js';
 import { handleDiscover } from './modules/discovery.js';
 import { dedupeCameraOverrides, renderOptions } from './modules/feature-options.js';
 
@@ -143,6 +144,14 @@ const init = async () => {
   }
 
   state.pluginConfig[0].name ||= PLUGIN_NAME;
+
+  // Assistant (Homebridge AI Kit): only shown when the shared HomebridgeAiKit block is set up and enabled.
+  await initAssistant();
+
+  if(assistant.available && !assistant.enabled) {
+
+    $('assistantHint').style.display = 'block';
+  }
 
   // One-shot cleanup: collapse any pre-existing duplicate cameraOverrides on every controller. Older code paths (and manual edits) could leave multiple
   // entries for the same camera; the runtime only honors the first match, so the trailing rows are dead weight worth removing on first load.
