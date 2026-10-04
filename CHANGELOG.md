@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
-## [Unreleased] - 1.4.0
+## [1.4.0] - 2026-10-04
 
 ### Added
 
@@ -14,10 +14,6 @@ All notable changes to this project will be documented in this file. This projec
 
 - **First required runtime dependency**: `@mp-consulting/homebridge-ai-core`, used only by the webUI server. Its only dependency is `ajv`.
 - **UI assets are vendored with `mp-ui-kit-copy --vendor`** from `@mp-consulting/homebridge-ui-kit` 1.2.0 instead of a hand-written copy script; `homebridge-ui/public/lib/` keeps the same layout and now also contains `ai.css`.
-
-### Release blockers
-
-- `@mp-consulting/homebridge-ai-core` (`file:../homebridge-mcp-server/packages/ai-core`) and `@mp-consulting/homebridge-ui-kit` (`file:../homebridge-ui-kit`) are local, unpublished checkouts. Change them to `^2.0.0` and `^1.2.0` once published, and regenerate `package-lock.json`.
 
 ## [1.3.0] - 2026-10-03
 
