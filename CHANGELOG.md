@@ -8,16 +8,16 @@ All notable changes to this project will be documented in this file. This projec
 
 - **Assistant in the webUI.** When an AI provider is set up in Homebridge AI Kit (the shared `HomebridgeAiKit` platform block), an **Explain** button appears next to a controller that fails to connect when added or edited, a controller shown as Offline, an empty or failed discovery, a controller whose devices cannot be loaded on the feature options screen, devices that are not connected or are updating, and a failed ONVIF discovery for a third-party camera. The explanation streams into an Assistant panel, with UniFi Protect context (local users and roles, the plugin's login/privilege/connection error messages, TLS certificate pinning, discovery, ONVIF, streaming). Only scrubbed error text (controller or camera address, IP and MAC addresses replaced by placeholders) and whitelisted facts are sent: never controller credentials or addresses, camera (ONVIF) credentials, nor device IPs, MACs or IDs. Without the AI Kit nothing changes, apart from a small tip under the controller list.
 - The feature options screen now shows why a controller's devices could not be loaded (it used to stay silent).
-- `homebridge-ui/server.js` registers the `/ai/status`, `/ai/explain`, `/ai/ask` and `/ai/config` routes with `registerAiRoutes` from `@mp-consulting/homebridge-ai-kit/plugin`, via `homebridge-ui/assistant.js`.
+- `homebridge-ui/server.js` registers the `/ai/status`, `/ai/explain`, `/ai/ask` and `/ai/config` routes with `registerAiRoutes` from `@mp-consulting/homebridge-ai-core/plugin`, via `homebridge-ui/assistant.js`.
 
 ### Changed
 
-- **First required runtime dependency**: `@mp-consulting/homebridge-ai-kit`, used only by the webUI server.
+- **First required runtime dependency**: `@mp-consulting/homebridge-ai-core`, used only by the webUI server. Its only dependency is `ajv`.
 - **UI assets are vendored with `mp-ui-kit-copy --vendor`** from `@mp-consulting/homebridge-ui-kit` 1.2.0 instead of a hand-written copy script; `homebridge-ui/public/lib/` keeps the same layout and now also contains `ai.css`.
 
 ### Release blockers
 
-- `@mp-consulting/homebridge-ai-kit` (`file:../homebridge-mcp-server`) and `@mp-consulting/homebridge-ui-kit` (`file:../homebridge-ui-kit`) are local, unpublished checkouts. Change them to `^2.0.0` and `^1.2.0` once published, and regenerate `package-lock.json`.
+- `@mp-consulting/homebridge-ai-core` (`file:../homebridge-mcp-server/packages/ai-core`) and `@mp-consulting/homebridge-ui-kit` (`file:../homebridge-ui-kit`) are local, unpublished checkouts. Change them to `^2.0.0` and `^1.2.0` once published, and regenerate `package-lock.json`.
 
 ## [1.3.0] - 2026-10-03
 

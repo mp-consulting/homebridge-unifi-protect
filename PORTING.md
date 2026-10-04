@@ -1,6 +1,6 @@
 # Porting Provenance
 
-This plugin has **no required runtime dependencies**. Everything it needs beyond Node.js built-ins is implemented in-repo. Most of that code was ported from
+Apart from `@mp-consulting/homebridge-ai-core` (used only by the webUI server's Assistant routes; its only dependency is `ajv`), this plugin has **no required runtime dependencies**. Everything it needs beyond Node.js built-ins is implemented in-repo. Most of that code was ported from
 upstream packages at specific versions, and this document records exactly where each piece came from, what was changed, and how to sync against upstream in the
 future.
 

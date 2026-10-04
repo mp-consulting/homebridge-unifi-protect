@@ -108,6 +108,6 @@
     "ffmpeg-for-homebridge": "2.2.2"
   },
   "dependencies": {
-    "@mp-consulting/homebridge-ai-kit": "file:../homebridge-mcp-server"
+    "@mp-consulting/homebridge-ai-core": "file:../homebridge-mcp-server/packages/ai-core"
   }
 }

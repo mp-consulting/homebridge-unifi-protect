@@ -3,7 +3,7 @@
  *
  * assistant.js: @mp-consulting/homebridge-unifi-protect webUI Assistant routes.
  */
-import { registerAiRoutes } from '@mp-consulting/homebridge-ai-kit/plugin';
+import { registerAiRoutes } from '@mp-consulting/homebridge-ai-core/plugin';
 
 export const ASSISTANT_PLUGIN_NAME = '@mp-consulting/homebridge-unifi-protect';
 

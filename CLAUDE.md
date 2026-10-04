@@ -10,7 +10,7 @@ Homebridge plugin (`@mp-consulting/homebridge-unifi-protect`) providing full Hom
 - **Runtime**: Node.js >= 22, Homebridge >= 1.8.0
 - **Testing**: Vitest with v8 coverage
 - **Linting**: ESLint 9 flat config with typescript-eslint
-- **Dependencies**: The plugin itself needs none at runtime (the webUI server's Assistant routes use `@mp-consulting/homebridge-ai-kit`, the only required dependency) — the UniFi Protect API client (`src/unifi/`) and plugin utilities incl. the FFmpeg pipeline (`src/lib/`) are implemented in-repo on Node.js built-ins. `ffmpeg-for-homebridge` is an *optional* dependency resolved dynamically; when absent, FFmpeg comes from the system or the `videoProcessor` config option.
+- **Dependencies**: The plugin itself needs none at runtime (the only required runtime dependency is `@mp-consulting/homebridge-ai-core`, used by the webUI server's Assistant routes; its only dependency is `ajv`) — the UniFi Protect API client (`src/unifi/`) and plugin utilities incl. the FFmpeg pipeline (`src/lib/`) are implemented in-repo on Node.js built-ins. `ffmpeg-for-homebridge` is an *optional* dependency resolved dynamically; when absent, FFmpeg comes from the system or the `videoProcessor` config option.
 
 ## Commands
 
@@ -69,7 +69,7 @@ test/
 docs/                           # 12 guides (kebab-case filenames)
 homebridge-ui/                  # Custom config UI with discovery & feature options
 ├── server.js                   # webUI server (imports the compiled plugin from ../dist)
-├── assistant.js                # Assistant routes (/ai/*, from @mp-consulting/homebridge-ai-kit/plugin) + UniFi Protect system context
+├── assistant.js                # Assistant routes (/ai/*, from @mp-consulting/homebridge-ai-core/plugin) + UniFi Protect system context
 └── public/modules/assistant.js # Client-side Assistant: Explain buttons, error scrubbing, device/controller whitelists
 ```
 
