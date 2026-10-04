@@ -86,7 +86,7 @@
   "main": "dist/index.js",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@mp-consulting/homebridge-ui-kit": "file:../homebridge-ui-kit",
+    "@mp-consulting/homebridge-ui-kit": "^1.2.0",
     "@types/node": "^26.5.0",
     "@vitest/coverage-v8": "^5.0.0",
     "bootstrap": "^5.3.8",
@@ -108,6 +108,6 @@
     "ffmpeg-for-homebridge": "2.2.2"
   },
   "dependencies": {
-    "@mp-consulting/homebridge-ai-core": "file:../homebridge-mcp-server/packages/ai-core"
+    "@mp-consulting/homebridge-ai-core": "^2.0.0"
   }
 }
