@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [1.4.1] - 2026-10-04
+
+### Fixed
+
+- **Assistant panel layout.** The webUI now vendors `@mp-consulting/homebridge-ui-kit` 1.2.1, whose answer panel fills its slot (`width: 100%`, `box-sizing: border-box`, `min-width: 0`), wraps long words instead of overflowing, and moves a long title onto its own line instead of squeezing it. The explanation for a device that is not connected or is updating on the feature options screen moved from the narrow scope sidebar, where the panel was about 180px wide with its title broken over several lines, to a full-width notice above the options.
+- **Feature options dividers.** The line under each category header and between options used the text color (a bright white, square line in dark mode, a dark one in light mode) because its color variable resolved to nothing. Dividers now use the theme's subtle border color, the category cards clip their content to their rounded corners, and a collapsed category shows no divider at all.
+- **Scope diagram connectors.** The links between the Global, Controller and Device steps were short bars floating in the middle of the card. They are now thin lines in the theme's border color that join the step circles, and are hidden from screen readers.
+
 ## [1.4.0] - 2026-10-04
 
 ### Added
