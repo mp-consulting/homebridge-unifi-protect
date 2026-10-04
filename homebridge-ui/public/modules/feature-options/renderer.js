@@ -7,7 +7,7 @@ import { $, escapeAttr, escapeHtml, showScreen } from '../dom-helpers.js';
 import { CATEGORY_COLORS, CATEGORY_ICONS } from '../constants.js';
 import { buildScopeSelector, getCurrentScope, updateCascade } from './scope.js';
 import { countEnabled, countModified, getOptionState, isOptionModified } from './option-state.js';
-import { assistantController, assistantDevice, deviceProblem, renderExplain, scrubText } from '../assistant.js';
+import { assistant, assistantController, assistantDevice, deviceProblem, renderExplain, scrubText } from '../assistant.js';
 import { getControllers, saveConfigSilent, state } from '../state.js';
 import { renderThirdPartyOverridesPanel } from './third-party-overrides.js';
 
@@ -126,6 +126,40 @@ const showOptionsProblem = (ctrl, message) => {
   });
 };
 
+// Show why the selected device needs attention above the options, with an "Explain" button. Lives in the main column rather than the narrow scope
+// sidebar so an opened answer gets the full width. Renders nothing when the Assistant is off: the sidebar already shows the device status.
+const showDeviceProblem = (device, problem) => {
+
+  const container = $('infoAssistant');
+
+  if(!problem || !assistant.enabled) {
+
+    container.style.display = 'none';
+    container.replaceChildren();
+
+    return;
+  }
+
+  const alert = document.createElement('div');
+  const text = document.createElement('div');
+  const slot = document.createElement('div');
+
+  alert.className = 'alert alert-warning mb-0';
+  text.textContent = (device.name || 'This device') + ': ' + problem;
+  slot.className = 'mt-2';
+  alert.append(text, slot);
+  container.replaceChildren(alert);
+  container.style.display = 'block';
+
+  renderExplain(slot, {
+
+    context: 'The user is looking at the feature options of a UniFi Protect device in the plugin webUI.',
+    device: assistantDevice(device),
+    error: problem,
+    title: 'Why is ' + (device.name || 'this device') + ' not connected?',
+  });
+};
+
 export const openFeatureOptions = async (controllerIndex) => {
 
 
@@ -141,6 +175,7 @@ export const openFeatureOptions = async (controllerIndex) => {
   $('optionsSearch').value = '';
   $('optionsProblem').style.display = 'none';
   $('optionsProblem').replaceChildren();
+  showDeviceProblem(null, null);
 
   try {
 
@@ -225,26 +260,12 @@ export const renderOptions = () => {
       statusEl.className = 'text-success';
     }
 
-    const problem = deviceProblem(scope.device);
-
-    if(problem) {
-
-      renderExplain($('infoAssistant'), {
-
-        context: 'The user is looking at the feature options of a UniFi Protect device in the plugin webUI.',
-        device: assistantDevice(scope.device),
-        error: problem,
-        title: 'Why is ' + (scope.device.name || 'this device') + ' not connected?',
-      });
-    } else {
-
-      $('infoAssistant').style.display = 'none';
-      $('infoAssistant').replaceChildren();
-    }
+    showDeviceProblem(scope.device, deviceProblem(scope.device));
   } else {
 
 
     $('deviceInfoPanel').style.display = 'none';
+    showDeviceProblem(null, null);
   }
 
   // Third-party camera URL overrides panel.

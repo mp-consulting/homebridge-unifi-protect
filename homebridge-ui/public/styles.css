@@ -10,9 +10,12 @@
   --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   --card-hover-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   --card-header-bg: transparent;
-  --card-header-border: inherit;
+  /* Dividers use the theme's border token. A bare `inherit` here resolved to nothing at :root, so the borders fell back to currentcolor - a bright
+     white line in dark mode. */
+  --divider-color: var(--mp-border, var(--bs-border-color-translucent));
+  --card-header-border: var(--divider-color);
   --card-header-hover-bg: rgba(0, 0, 0, 0.02);
-  --list-item-border: inherit;
+  --list-item-border: var(--divider-color);
   --progress-bg: rgba(0, 0, 0, 0.06);
   --scope-device-bg: rgba(13, 202, 240, 0.04);
   --scope-controller-bg: rgba(25, 135, 84, 0.04);
@@ -21,8 +24,8 @@
   --default-on-bg: rgba(25, 135, 84, 0.1);
   --default-off-bg: rgba(108, 117, 125, 0.1);
   --scope-hint-color: #6c757d;
-  --connector-line: #dee2e6;
-  --connector-active: #495057;
+  --connector-line: var(--bs-border-color);
+  --connector-active: var(--bs-tertiary-color);
 }
 
 /* ============================================================================
@@ -49,8 +52,8 @@
    GENERAL
    ============================================================================ */
 
-.list-group {
-  border: 1px solid rgba(0, 0, 0, 0.125);
+.list-group:not(.list-group-flush) {
+  border: 1px solid var(--divider-color);
   border-radius: 0.25rem;
 }
 
@@ -179,21 +182,17 @@
   line-height: 1.2;
 }
 
+/* Connector: a thin line from one scope dot to the next, centred under the 32px dots and reaching into the levels' padding so it touches them. */
 .scope-connector {
-  display: flex;
-  justify-content: center;
-  padding-left: 15px;
-  height: 12px;
-}
-
-.scope-connector-line {
   width: 2px;
-  height: 100%;
+  height: 20px;
+  margin: -6px 0 -6px 15px;
+  border-radius: 1px;
   background: var(--connector-line);
   transition: background 0.3s ease;
 }
 
-.scope-connector.active .scope-connector-line {
+.scope-connector.active {
   background: var(--connector-active);
 }
 
@@ -217,9 +216,19 @@
   cursor: pointer;
 }
 
-/* Category accent borders */
+/* Category accent borders. The card clips its children to its rounded corners, so the header divider and the option rows never stick out. */
 .category-card {
   border-left: 4px solid var(--category-color, #6c757d) !important;
+  overflow: hidden;
+}
+
+/* Divider between the header and the options: a subtle theme border on the open body only, none while the category is collapsed. */
+.category-card > .card-header {
+  border-bottom: 0;
+}
+
+.category-body.open {
+  border-top: 1px solid var(--divider-color);
 }
 
 /* Category icon circles */
