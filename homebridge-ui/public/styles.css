@@ -8,7 +8,6 @@
   --muted-color: #6c757d;
   --card-bg: transparent;
   --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  --card-hover-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   --card-header-bg: transparent;
   /* Dividers use the theme's border token. A bare `inherit` here resolved to nothing at :root, so the borders fell back to currentcolor - a bright
      white line in dark mode. */
@@ -52,6 +51,16 @@
    GENERAL
    ============================================================================ */
 
+/* Lets a flex child shrink below its content width so long text wraps instead of pushing its siblings out. */
+.min-w-0 {
+  min-width: 0;
+}
+
+/* Long unbroken names and addresses wrap anywhere rather than overflow. */
+.text-break-anywhere {
+  overflow-wrap: anywhere;
+}
+
 .list-group:not(.list-group-flush) {
   border: 1px solid var(--divider-color);
   border-radius: 0.25rem;
@@ -65,11 +74,6 @@
   border: none;
   background-color: var(--card-bg);
   box-shadow: var(--card-shadow);
-  transition: box-shadow 0.2s ease;
-}
-
-.card:hover {
-  box-shadow: var(--card-hover-shadow);
 }
 
 .card-header {
@@ -261,18 +265,34 @@
   min-width: 40px;
 }
 
+/* The fill spans the whole track and is scaled to the enabled share (--progress, 0-1, set by the renderer), so changes animate on the compositor. */
 .category-progress-fill {
+  display: block;
+  width: 100%;
   height: 100%;
-  border-radius: 2px;
   background-color: var(--category-color, #6c757d);
-  transition: width 0.3s ease;
+  transform-origin: left;
+  transform: scaleX(var(--progress, 0));
+  transition: transform 0.3s ease;
 }
 
-/* Toggle icon */
+/* Toggle icon: one chevron-down, turned up while the category body is open. */
 .toggle-icon {
-  transition: transform 0.3s ease;
+  display: inline-block;
   font-size: 0.8rem;
   opacity: 0.4;
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.category-card:has(> .category-body.open) .toggle-icon {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .category-progress-fill,
+  .toggle-icon {
+    transition: none;
+  }
 }
 
 /* Collapse */
@@ -288,8 +308,8 @@
    FEATURE OPTIONS - OPTION ITEMS
    ============================================================================ */
 
-/* Scope-colored left border */
-.option-item {
+/* Scope-colored left border. Qualified with .list-group-item so this transition wins over the generic list item one further down. */
+.list-group-item.option-item {
   border-left: 3px solid transparent !important;
   transition: border-color 0.2s ease, background-color 0.2s ease;
 }
@@ -353,6 +373,7 @@
 .option-name {
   font-weight: 600;
   font-size: 0.9rem;
+  overflow-wrap: anywhere;
 }
 
 .option-description {

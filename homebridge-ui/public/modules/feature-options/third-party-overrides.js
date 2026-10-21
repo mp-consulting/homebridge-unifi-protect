@@ -43,7 +43,6 @@ export const renderThirdPartyOverridesPanel = (scope) => {
   const panel = $('thirdPartyOverridesPanel');
   const header = $('thirdPartyOverridesHeader');
   const body = $('thirdPartyOverridesBody');
-  const toggle = $('thirdPartyOverridesToggle');
   const rtspInput = $('thirdPartyRtspUrl');
   const snapshotInput = $('thirdPartySnapshotUrl');
   const onvifHost = $('thirdPartyOnvifHost');
@@ -131,13 +130,13 @@ export const renderThirdPartyOverridesPanel = (scope) => {
   clearExplain($('thirdPartyDiscoverAssistant'));
 
   // Apply persisted open/closed state. Default closed to match the category cards below.
-  applyThirdPartyPanelOpenState(body, toggle);
+  applyThirdPartyPanelOpenState(body);
 
   // Re-bind handlers on each render. Setting onX handlers (rather than addEventListener) automatically replaces any prior listener.
   header.onclick = () => {
 
     state.thirdPartyPanelOpen = !state.thirdPartyPanelOpen;
-    applyThirdPartyPanelOpenState(body, toggle);
+    applyThirdPartyPanelOpenState(body);
   };
 
   rtspInput.oninput = () => updateCameraOverride(scope.device.mac, 'rtspUrl', rtspInput.value);
@@ -149,11 +148,10 @@ export const renderThirdPartyOverridesPanel = (scope) => {
   discoverBtn.onclick = () => discoverOnvifAndPopulate(scope.device.mac);
 };
 
-// Sync the body's `.open` class and the chevron direction with state.thirdPartyPanelOpen.
-const applyThirdPartyPanelOpenState = (body, toggle) => {
+// Sync the body's `.open` class with state.thirdPartyPanelOpen. The chevron rotates in CSS from that class.
+const applyThirdPartyPanelOpenState = (body) => {
 
   body.classList.toggle('open', state.thirdPartyPanelOpen);
-  toggle.className = 'bi bi-chevron-' + (state.thirdPartyPanelOpen ? 'up' : 'down') + ' toggle-icon';
 };
 
 // Call the backend ONVIF discovery endpoint and, on success, populate the URL fields and persist them.

@@ -37,16 +37,16 @@ export const renderControllers = () => {
 
     li.innerHTML = `
       <div class="d-flex w-100 justify-content-between align-items-center">
-        <div>
-          <h6 class="mb-1">
+        <div class="flex-grow-1 min-w-0">
+          <h6 class="mb-1 text-break-anywhere">
             <i class="bi bi-server me-2"></i> ${escapeHtml(ctrl.name || ctrl.address)}
             <span class="status-badge badge rounded-pill bg-secondary ms-2" style="font-size: 0.65rem;">
               <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
             </span>
           </h6>
-          <small class="text-muted"><i class="bi bi-hdd-network me-1"></i> ${escapeHtml(ctrl.address)}</small>
+          <small class="text-muted text-break-anywhere"><i class="bi bi-hdd-network me-1"></i> ${escapeHtml(ctrl.address)}</small>
         </div>
-        <div class="d-flex gap-1">
+        <div class="d-flex gap-1 flex-shrink-0">
           <button class="btn btn-sm btn-primary feature-options-btn"><i class="bi bi-sliders"></i> Options</button>
           <button class="btn btn-sm btn-secondary edit-ctrl-btn"><i class="bi bi-pencil"></i> Edit</button>
           <button class="btn btn-sm btn-danger delete-ctrl-btn"><i class="bi bi-trash"></i></button>
