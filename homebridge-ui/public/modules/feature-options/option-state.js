@@ -116,3 +116,14 @@ export const countEnabled = (categoryName, options, scope) => {
 
   return count;
 };
+
+// Header summary for a category: how many of the shown options are on and modified. The options are the ones listed for the current device and search, so
+// the "x/y on" count and the progress bar share one denominator. The "modified only" filter is applied after this, so it never changes the totals.
+export const categoryStats = (categoryName, options, scope) => {
+
+  const total = options.length;
+  const enabled = countEnabled(categoryName, options, scope);
+  const modified = countModified(categoryName, options, scope);
+
+  return { enabled, fraction: total ? (enabled / total) : 0, modified, total };
+};

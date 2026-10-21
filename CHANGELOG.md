@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Feature options**: changing an option updates only its row and category instead of rebuilding the list, so keyboard focus stays put and switches animate. The "x/y on" count and progress bar count only the options shown for the device, and the progress bar is drawn again.
+- **Feature options**: a device with no state no longer breaks the panel, long option names and controller names wrap, and an empty search says so.
+
+### Changed
+
+- **Feature options**: the category chevron rotates and the progress bar animates with `transform`; non-clickable cards no longer lift on hover.
+
 ## [1.4.2] - 2026-10-04
 
 ### Fixed
