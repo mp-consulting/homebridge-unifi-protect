@@ -26,9 +26,9 @@ export interface HomebridgePluginLogging {
 }
 
 // Validates a name against HomeKit's naming conventions, mirroring the rules HAP-NodeJS enforces: a name must start and end with a letter or number, and may
-// contain spaces, apostrophes, and common punctuation in between. We additionally reject runs of spaces. Compiled once at module scope since this sits on the
-// fast path of sanitizeName().
-const VALID_HOMEKIT_NAME = /^(?!.* {2})[\p{L}\p{N}][\p{L}\p{N} ’'&!._:;()/,-]*[\p{L}\p{N}]$/u;
+// contain spaces, apostrophes, and common punctuation in between. A single letter or number is a valid name on its own. We additionally reject runs of spaces.
+// Compiled once at module scope since this sits on the fast path of sanitizeName().
+const VALID_HOMEKIT_NAME = /^(?!.* {2})[\p{L}\p{N}](?:[\p{L}\p{N} ’'&!._:;()/,-]*[\p{L}\p{N}])?$/u;
 
 // Characters HomeKit permits within a name, beyond letters and numbers.
 const INVALID_HOMEKIT_NAME_CHARS = /[^\p{L}\p{N}\s’'&!._:;()/,-]/gu;
