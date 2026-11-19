@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **USL Smoke support**: the UniFi Protect USL Smoke detector now appears in HomeKit as a smoke sensor and a carbon monoxide sensor. Each sensor reports a fault when the detector does: a sensor fault, the end of the detector's life, or a smoke chamber that needs cleaning. If the detector stops reporting its status, HomeKit keeps the last state it reported rather than clearing an alarm. There is nothing to configure.
+- **MQTT**: smoke detectors publish `smoke` and `carbonmonoxide` (`true` or `false`), and `smokedetector` with the detector's full status, including self-tests and the raw smoke and carbon monoxide readings. Each has a matching `/get` topic. See the [MQTT documentation](docs/mqtt.md).
+
 ## [1.4.5] - 2026-10-22
 
 ### Notes

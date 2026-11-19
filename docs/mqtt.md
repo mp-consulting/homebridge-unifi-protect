@@ -62,6 +62,7 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 | `alarm`               | Sensor              | `true` or `false` when a UniFi Protect sensor detects a recognized alarm sound.
 | `ambientlight`        | Sensor              | Ambient light level, in lux, on a UniFi Protect sensor.
 | `authenticate`        | Doorbell            | `{type: "fingerprint" or "nfc", id:cardId}`. Publishes upon a successful authentication using fingerprint or NFC. Type is `fingerprint` or `nfc` depending on which authentication type was used. If an NFC card was used, `id` will contain the NFC card ID as detected by the doorbell.
+| `carbonmonoxide`      | Sensor              | `true` or `false` when a UniFi Protect smoke detector detects carbon monoxide.
 | `chime`               | Chime               | A number between 0 and 100 that represents the current volume of the chime as a percentage.
 | `contact`             | Sensor              | `true` or `false` when a UniFi Protect sensor detects contact. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
 | `doorbell`            | Camera              | `true` when the doorbell is rung. Each press of the doorbell will trigger a new event.
@@ -79,6 +80,8 @@ The topics and messages that `homebridge-unifi-protect` publishes are:
 | `occupancy`           | Multiple            | `true` when occupancy is detected. `false` when occupancy is no longer detected.
 | `rtsp`                | Camera              | `{name: "URL"}`. Represents a JSON containing all the valid RTSP URLs that can be used to stream from this camera. `Name` is the name assigned by UniFi Protect to the RTSP URL. `URL` represents the URL that can be used for streaming.
 | `securitysystem`      | Camera              | One of `Alarm`, `Away`, `Home`, `Night`, `Off`. This message is published every time the security state is set.
+| `smoke`               | Sensor              | `true` or `false` when a UniFi Protect smoke detector detects smoke.
+| `smokedetector`       | Sensor              | `JSON` containing the full status of a UniFi Protect smoke detector: the `smokeAlarm` and `coAlarm` states, the raw `smokeValue` and `coValue` readings, `testing`, `alarmSilenced`, `troubleHushed`, the `smokeSensorFault`, `coSensorFault`, `cleanSmokeSensor`, and `endOfLife` flags, `batteryLow` and `batteryVoltage`, `enabled`, `ready`, `wasMounted`, and the `smokeAlarmTriggeredAt`, `coAlarmTriggeredAt`, `alarmSilencedAt`, and `troubleSilencedAt` timestamps, each `null` when that event has never occurred. Sensors that aren't smoke detectors never publish this topic.
 | `snapshot`            | Camera              | A [data URL](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs) containing a base64-encoded JPEG of the snapshot that was requested (either by HomeKit or MQTT).
 | `systeminfo`          | Controller          | `JSON` containing the current Protect controller system information.
 | `telemetry`           | Controller          | All UniFi Protect telemetry from the realtime events API. This is the raw feed - you're on your own to parse through it for the messages you may be interested in. This is published to the controller MAC address.
@@ -94,6 +97,7 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 |-------------------------|---------------------|------------------
 | `alarm/get`             | Sensor              | `true` will trigger a publish event of the current alarm state for a UniFi Protect sensor.
 | `ambientlight/get`      | Sensor              | `true` will trigger a publish event of the ambient light level, in lux, for a UniFi Protect sensor.
+| `carbonmonoxide/get`    | Sensor              | `true` will trigger a publish event of the current carbon monoxide alarm state for a UniFi Protect smoke detector.
 | `chime/get`             | Chime               | `true` will trigger a publish event of the volume level for a UniFi Protect doorbell.
 | `chime/set`             | Chime               | A number between 0 and 100 that will set the volume level for a UniFi Protect doorbell.
 | `contact/get`           | Sensor              | `true` will trigger a publish event of the current contact state for a UniFi Protect sensor. Note: UniFi Protect will set this state differently depending on the placement type you select in the Protect app or the Protect webUI.
@@ -116,6 +120,8 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 | `rtsp/get`              | Camera              | `true` will request that the plugin publish a message to the `rtsp` topic containing a JSON of RTSP URLs for the camera or doorbell.
 | `securitysystem/get`    | Camera              | `true` will trigger a publish event of the current state of the security system accessory.
 | `securitysystem/set`    | Camera              | One of `AlarmOff`, `AlarmOn`, `Away`, `Home`, `Night`, `Off`. This will set the respective state on the security system accessory.
+| `smoke/get`             | Sensor              | `true` will trigger a publish event of the current smoke alarm state for a UniFi Protect smoke detector.
+| `smokedetector/get`     | Sensor              | `true` will trigger a publish event of the current status of a UniFi Protect smoke detector. The message is `null` if the smoke detector hasn't reported its status.
 | `snapshot/set`          | Camera              | `true` will trigger the camera to generate a snapshot.
 | `temperature/get`       | Sensor              | `true` will trigger a publish event of the temperature, in Celsius, for a UniFi Protect sensor.
 | `tone/set`              | Chime               | A value of either `buzzer` or `chime` will play the selected tone on a UniFi Protect chime.

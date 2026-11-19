@@ -55,7 +55,8 @@ src/
     ├── protect-camera.ts       # Camera accessory (composes camera-controls, camera-sensors, camera-video delegates)
     ├── protect-doorbell.ts     # Doorbell wiring (delegates: protect-doorbell-messages.ts, protect-doorbell-chimes.ts)
     ├── protect-accessory-context.ts  # Typed accessory.context
-    ├── protect-sensor.ts       # Motion/alarm/leak sensors (incl. SuperLink)
+    ├── protect-sensor.ts       # Motion/alarm/leak/smoke/carbon monoxide sensors (incl. SuperLink)
+    ├── protect-sensor-smoke.ts # Smoke detector policy: hardware detection, alarm and fault rules (pure functions)
     ├── protect-light.ts        # Light/LED control
     ├── protect-chime.ts        # Chime accessory
     ├── protect-viewer.ts       # Viewport device

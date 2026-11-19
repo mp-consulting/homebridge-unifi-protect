@@ -48,6 +48,10 @@ Everything not listed here is a faithful port. The deviations, all behavior-neut
   `'No active livestream session.'` error; only the next `start()` clears the cache. Documented by `test/livestream-protocol.test.ts`.
 - **Added** (not in upstream): the `verifyTls` constructor option enabling strict TLS certificate validation across the API connection, events WebSocket, and
   livestream WebSocket.
+- **Added** (newer than the 4.29.0 baseline): the smoke detector members of the sensor JSON, taken from `unifi-protect` 5.4.2 -
+  `ProtectSensorSmokeStatusInterface`, and on `ProtectSensorConfigInterface` the `smokeStatus`, `featureFlags.alarmTypes`, `smokeAlarmTriggeredAt`,
+  `coAlarmTriggeredAt`, `alarmSilencedAt` and `troubleSilencedAt` members. They are declared optional here, where upstream declares them required, so that
+  nothing depends on a controller reporting them.
 
 ### `src/lib/ffmpeg/` (from homebridge-plugin-utils 1.35.0)
 
