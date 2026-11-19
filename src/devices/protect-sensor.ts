@@ -70,6 +70,9 @@ interface SmokeAlarmDefinition {
   // The MQTT topic we publish the alarm state to.
   mqtt: string;
 
+  // What we append to the accessory name to name the service, so that HomeKit shows the two sensors of a detector under different names.
+  name: string;
+
   // The HomeKit service type for the sensor.
   serviceType: (hap: HAP) => WithUUID<typeof Service>;
 }
@@ -78,10 +81,10 @@ interface SmokeAlarmDefinition {
 const SMOKE_ALARMS: readonly SmokeAlarmDefinition[] = [
 
   { alarmType: SMOKE_ALARM_TYPES.carbonMonoxide, characteristic: (hap): WithUUID<new () => Characteristic> => hap.Characteristic.CarbonMonoxideDetected,
-    detected: carbonMonoxideDetected, faultReasons: carbonMonoxideFaultReasons, label: 'carbon monoxide', mqtt: 'carbonmonoxide',
+    detected: carbonMonoxideDetected, faultReasons: carbonMonoxideFaultReasons, label: 'carbon monoxide', mqtt: 'carbonmonoxide', name: ' Carbon Monoxide',
     serviceType: (hap): WithUUID<typeof Service> => hap.Service.CarbonMonoxideSensor },
   { alarmType: SMOKE_ALARM_TYPES.smoke, characteristic: (hap): WithUUID<new () => Characteristic> => hap.Characteristic.SmokeDetected,
-    detected: smokeDetected, faultReasons: smokeFaultReasons, label: 'smoke', mqtt: 'smoke',
+    detected: smokeDetected, faultReasons: smokeFaultReasons, label: 'smoke', mqtt: 'smoke', name: ' Smoke',
     serviceType: (hap): WithUUID<typeof Service> => hap.Service.SmokeSensor },
 ];
 
@@ -433,7 +436,7 @@ export class ProtectSensor extends ProtectDevice {
       }
 
       // Acquire the service.
-      const service = this.acquireService(serviceType);
+      const service = this.acquireService(serviceType, this.accessoryName + alarm.name);
 
       // Fail gracefully.
       if(!service) {

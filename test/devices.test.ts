@@ -444,7 +444,11 @@ describe('Smoke detector configuration', () => {
 
     new ProtectSensor(nvr, makeSmokeDetectorConfig() as never, accessory);
 
-    expect(summarize(accessory)).toEqual([ 'Battery||Hallway', 'CarbonMonoxideSensor||Hallway', 'SmokeSensor||Hallway' ]);
+    expect(summarize(accessory)).toEqual([ 'Battery||Hallway', 'CarbonMonoxideSensor||Hallway Carbon Monoxide', 'SmokeSensor||Hallway Smoke' ]);
+
+    // The name HomeKit shows for each sensor tells the two apart.
+    expect(accessory.getService(hap.Service.SmokeSensor)?.getCharacteristic(hap.Characteristic.Name).value).toBe('Hallway Smoke');
+    expect(accessory.getService(hap.Service.CarbonMonoxideSensor)?.getCharacteristic(hap.Characteristic.Name).value).toBe('Hallway Carbon Monoxide');
     expect(read(accessory)).toEqual({ carbonMonoxide: 0, carbonMonoxideFault: 0, smoke: 0, smokeFault: 0 });
     expect(logged(nvr, 'info', 'Enabled sensors: carbon monoxide, smoke.')).toBe(1);
   });
@@ -455,7 +459,7 @@ describe('Smoke detector configuration', () => {
 
     new ProtectSensor(makeNvr(), makeSmokeDetectorConfig({ featureFlags: { alarmTypes: ['smoke'] } }) as never, accessory);
 
-    expect(summarize(accessory)).toEqual([ 'Battery||Hallway', 'SmokeSensor||Hallway' ]);
+    expect(summarize(accessory)).toEqual([ 'Battery||Hallway', 'SmokeSensor||Hallway Smoke' ]);
   });
 
   it.each([
@@ -653,7 +657,7 @@ describe('Smoke detector configuration', () => {
     const nvr = makeNvr();
 
     // Homebridge restores the accessory, alarm and all, before the detector has said anything.
-    accessory.addService(new hap.Service.SmokeSensor('Hallway')).updateCharacteristic(hap.Characteristic.SmokeDetected, 1);
+    accessory.addService(new hap.Service.SmokeSensor('Hallway Smoke')).updateCharacteristic(hap.Characteristic.SmokeDetected, 1);
 
     new ProtectSensor(nvr, makeSmokeDetectorConfig({ smokeStatus: null }) as never, accessory);
 
@@ -671,7 +675,7 @@ describe('Smoke detector configuration', () => {
 
     pushUpdate(nvr, sensor, { featureFlags: { alarmTypes: ['smoke'] } });
 
-    expect(summarize(accessory)).toEqual([ 'Battery||Hallway', 'SmokeSensor||Hallway' ]);
+    expect(summarize(accessory)).toEqual([ 'Battery||Hallway', 'SmokeSensor||Hallway Smoke' ]);
     expect(logged(nvr, 'info', 'Enabled sensor: smoke.')).toBe(1);
   });
 
