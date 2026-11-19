@@ -521,6 +521,51 @@ describe('Smoke detector configuration', () => {
     expect(publishedTo(nvr, 'smoke').at(-1)).toBe('false');
   });
 
+  it('notifies HomeKit of each alarm on its own sensor, which is what HomeKit alerts on', () => {
+
+    const accessory = makeAccessory('Hallway');
+    const nvr = makeNvr();
+    const sensor = new ProtectSensor(nvr, makeSmokeDetectorConfig() as never, accessory);
+    const hapAccessory = accessory as unknown as hap.Accessory;
+    let notified: [string, string, unknown][] = [];
+
+    // Homebridge publishes our accessories behind its bridge, and a bridged accessory hands every characteristic change to that bridge. As HAP does, we only
+    // count the ones that changed a value: those are what HomeKit is sent.
+    new hap.Bridge('Bridge', hap.uuid.generate('Bridge')).addBridgedAccessory(hapAccessory);
+
+    hapAccessory.on(hap.AccessoryEventTypes.SERVICE_CHARACTERISTIC_CHANGE, (change) => {
+
+      if(change.oldValue !== change.newValue) {
+
+        notified.push([ change.service.constructor.name, change.characteristic.constructor.name, change.newValue ]);
+      }
+    });
+
+    pushUpdate(nvr, sensor, { smokeStatus: makeSmokeStatus({ smokeAlarm: true }) });
+
+    expect(notified).toEqual([[ 'SmokeSensor', 'SmokeDetected', hap.Characteristic.SmokeDetected.SMOKE_DETECTED ]]);
+
+    notified = [];
+    pushUpdate(nvr, sensor, { smokeStatus: makeSmokeStatus({ coAlarm: true, smokeAlarm: true }) });
+
+    expect(notified).toEqual([[ 'CarbonMonoxideSensor', 'CarbonMonoxideDetected', hap.Characteristic.CarbonMonoxideDetected.CO_LEVELS_ABNORMAL ]]);
+
+    // An update that changes neither alarm sends HomeKit nothing.
+    notified = [];
+    pushUpdate(nvr, sensor, { smokeStatus: makeSmokeStatus({ coAlarm: true, coValue: 80, smokeAlarm: true }) });
+
+    expect(notified).toEqual([]);
+
+    pushUpdate(nvr, sensor, { smokeStatus: makeSmokeStatus() });
+
+    expect(notified).toHaveLength(2);
+    expect(notified).toEqual(expect.arrayContaining([
+
+      [ 'CarbonMonoxideSensor', 'CarbonMonoxideDetected', hap.Characteristic.CarbonMonoxideDetected.CO_LEVELS_NORMAL ],
+      [ 'SmokeSensor', 'SmokeDetected', hap.Characteristic.SmokeDetected.SMOKE_NOT_DETECTED ],
+    ]));
+  });
+
   it('announces an alarm that is already sounding at startup', () => {
 
     const accessory = makeAccessory('Hallway');
