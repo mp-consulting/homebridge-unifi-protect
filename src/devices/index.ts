@@ -16,5 +16,6 @@ export * from './protect-liveviews.js';
 export * from './protect-nvr-systeminfo.js';
 export * from './protect-securitysystem.js';
 export * from './protect-sensor.js';
+export * from './protect-sensor-smoke.js';
 export * from './protect-viewer.js';
 
