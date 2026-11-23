@@ -1239,6 +1239,34 @@ export interface ProtectRingtoneConfigInterface {
   [key: string]: ProtectKnownJsonValue;
 }
 /**
+ * A description of the UniFi Protect sensor smoke and carbon monoxide detector status JSON. It carries the alarm and fault booleans alongside the raw smoke,
+ * carbon monoxide, and battery voltage readings.
+ *
+ * The controller reports this block on sensors that are not smoke detectors as well, so its presence says nothing about whether a sensor has detector hardware.
+ * Neither does `featureFlags.alarmTypes`: a sensor that only listens for alarm sounds advertises the same alarm types a detector does. The model is the
+ * hardware signal.
+ */
+export interface ProtectSensorSmokeStatusInterface {
+
+  alarmSilenced: boolean;
+  batteryLow: boolean;
+  batteryVoltage: number;
+  cleanSmokeSensor: boolean;
+  coAlarm: boolean;
+  coSensorFault: boolean;
+  coValue: number;
+  enabled: boolean;
+  endOfLife: boolean;
+  ready: boolean;
+  smokeAlarm: boolean;
+  smokeSensorFault: boolean;
+  smokeValue: number;
+  testing: boolean;
+  troubleHushed: boolean;
+  wasMounted: boolean;
+  [key: string]: ProtectKnownJsonValue;
+}
+/**
  * A semi-complete description of the UniFi Protect sensor JSON.
  */
 export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface {
@@ -1246,6 +1274,7 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
   alarmSettings: {
     isEnabled: boolean;
   };
+  alarmSilencedAt?: Nullable<number>;
   alarmTriggeredAt: Nullable<number>;
   batteryStatus: {
     isLow: boolean;
@@ -1258,7 +1287,14 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
   bridge: string;
   bridgeCandidates: [];
   camera: string;
+  coAlarmTriggeredAt?: Nullable<number>;
   connectionType: string;
+  // The smoke detector members - the alarm timestamps, featureFlags, and smokeStatus - are optional so that nothing depends on a controller reporting them:
+  // they arrived with the smoke detector, and controller firmware that predates it may not send them.
+  featureFlags?: {
+    alarmTypes?: string[];
+    [key: string]: ProtectKnownJsonValue;
+  };
   humiditySettings: ProtectThresholdSettingsInterface;
   isMotionDetected: boolean;
   isOpened: Nullable<boolean>;
@@ -1279,6 +1315,8 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
   };
   mountType: string;
   openStatusChangedAt: number;
+  smokeAlarmTriggeredAt?: Nullable<number>;
+  smokeStatus?: Nullable<ProtectSensorSmokeStatusInterface>;
   stats?: {
     humidity?: ProtectAirQualityMetricInterface;
     light?: ProtectAirQualityMetricInterface;
@@ -1286,6 +1324,7 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
   };
   tamperingDetectedAt: Nullable<number>;
   temperatureSettings: ProtectThresholdSettingsInterface;
+  troubleSilencedAt?: Nullable<number>;
   wifiConnectionState: ProtectWifiConnectionStateInterface;
   wiredConnectionState: ProtectWiredConnectionStateInterface;
 }
@@ -1456,6 +1495,8 @@ export type ProtectNvrSystemEvent = ProtectNvrSystemEventInterface;
 export type ProtectNvrSystemEventController = ProtectNvrSystemEventControllerInterface;
 /** @see {@link ProtectRingtoneConfigInterface} */
 export type ProtectRingtoneConfig = ProtectRingtoneConfigInterface;
+/** @see {@link ProtectSensorSmokeStatusInterface} */
+export type ProtectSensorSmokeStatus = ProtectSensorSmokeStatusInterface;
 /** @see {@link ProtectSensorConfigInterface} */
 export type ProtectSensorConfig = ProtectSensorConfigInterface;
 /** @see {@link ProtectViewerConfigInterface} */

@@ -131,7 +131,7 @@ All generally available UniFi Protect hardware is supported:
 
 - **Cameras** — G3, G4, G5, G6, AI Pro series (with tamper detection on supported models)
 - **Doorbells** — all UniFi Protect doorbells
-- **Sensors** — motion, contact, and leak sensors, including SuperLink
+- **Sensors** — motion, contact, and leak sensors, including SuperLink, and the USL Smoke smoke and carbon monoxide detector
 - **Chimes**
 - **Lights**
 - **Viewports**

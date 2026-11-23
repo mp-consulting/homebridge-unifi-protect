@@ -3,9 +3,12 @@
  *
  * protect-sensor.ts: Sensor device class for UniFi Protect.
  */
-import type { DeepPartial, ProtectEventPacket, ProtectSensorConfig } from '../unifi/index.js';
-import type { Characteristic, CharacteristicValue, PlatformAccessory, Service, WithUUID } from 'homebridge';
+import type { Characteristic, CharacteristicValue, HAP, PlatformAccessory, Service, WithUUID } from 'homebridge';
+import type { DeepPartial, ProtectEventPacket, ProtectSensorConfig, ProtectSensorSmokeStatus } from '../unifi/index.js';
+import { SMOKE_ALARM_TYPES, type SmokeAlarmType, type SmokeFaultReason, carbonMonoxideDetected, carbonMonoxideFaultReasons, smokeAlarmCapable,
+  smokeDetected, smokeDetectorHardware, smokeFaultReasons } from './protect-sensor-smoke.js';
 import { HOMEKIT_AMBIENT_LIGHT_MINIMUM } from '../settings.js';
+import type { Nullable } from '../lib/index.js';
 import type { ProtectAccessoryContext } from './protect-accessory-context.js';
 import { ProtectDevice } from './protect-device.js';
 import type { ProtectNvr } from '../protect-nvr.js';
@@ -45,11 +48,62 @@ export interface SimpleSensorDefinition {
   value: () => CharacteristicValue;
 }
 
+// The definition of one of the sensor services of a smoke detector. Every one of them follows the same template, so the services we create, what we log, and
+// the MQTT topics we use all come from this one description.
+interface SmokeAlarmDefinition {
+
+  // The alarm type the detector must advertise for this sensor to exist.
+  alarmType: SmokeAlarmType;
+
+  // The characteristic that holds the alarm state.
+  characteristic: (hap: HAP) => WithUUID<new () => Characteristic>;
+
+  // Whether the detector is reporting this alarm.
+  detected: (status: ProtectSensorSmokeStatus) => boolean;
+
+  // The detector fault flags that stand against this sensor.
+  faultReasons: (status: ProtectSensorSmokeStatus) => SmokeFaultReason[];
+
+  // A human-readable description used when logging.
+  label: string;
+
+  // The MQTT topic we publish the alarm state to.
+  mqtt: string;
+
+  // What we append to the accessory name to name the service, so that HomeKit shows the two sensors of a detector under different names.
+  name: string;
+
+  // The HomeKit service type for the sensor.
+  serviceType: (hap: HAP) => WithUUID<typeof Service>;
+}
+
+// The sensors of a smoke detector, in the order we report them.
+const SMOKE_ALARMS: readonly SmokeAlarmDefinition[] = [
+
+  { alarmType: SMOKE_ALARM_TYPES.carbonMonoxide, characteristic: (hap): WithUUID<new () => Characteristic> => hap.Characteristic.CarbonMonoxideDetected,
+    detected: carbonMonoxideDetected, faultReasons: carbonMonoxideFaultReasons, label: 'carbon monoxide', mqtt: 'carbonmonoxide', name: ' Carbon Monoxide',
+    serviceType: (hap): WithUUID<typeof Service> => hap.Service.CarbonMonoxideSensor },
+  { alarmType: SMOKE_ALARM_TYPES.smoke, characteristic: (hap): WithUUID<new () => Characteristic> => hap.Characteristic.SmokeDetected,
+    detected: smokeDetected, faultReasons: smokeFaultReasons, label: 'smoke', mqtt: 'smoke', name: ' Smoke',
+    serviceType: (hap): WithUUID<typeof Service> => hap.Service.SmokeSensor },
+];
+
+// How we describe each smoke detector fault when logging.
+const SMOKE_FAULT_LABELS: Readonly<Record<SmokeFaultReason, string>> = {
+
+  cleanSmokeSensor: 'needs cleaning',
+  coSensorFault: 'sensor fault',
+  endOfLife: 'end of life',
+  smokeSensorFault: 'sensor fault',
+};
+
 export class ProtectSensor extends ProtectDevice {
 
   private enabledSensors: string[];
   private lastAlarm?: boolean;
   private lastLeak: Record<string, boolean | undefined>;
+  private lastSmoke: Partial<Record<SmokeAlarmType, { detected: boolean; faults: string }>>;
+  private lastSmokeTesting?: boolean;
   public override ufp: ProtectSensorConfig;
 
   // Create an instance.
@@ -59,6 +113,7 @@ export class ProtectSensor extends ProtectDevice {
 
     this.enabledSensors = [];
     this.lastLeak = {};
+    this.lastSmoke = {};
     this.ufp = device;
 
     this.configureHints();
@@ -131,6 +186,9 @@ export class ProtectSensor extends ProtectDevice {
 
       currentEnabledSensors.push('ambient light');
     }
+
+    // Configure the smoke and carbon monoxide sensors of a smoke detector.
+    currentEnabledSensors.push(...this.configureSmokeDetector());
 
     // Configure the contact sensor.
     if(this.configureContactSensor()) {
@@ -354,6 +412,118 @@ export class ProtectSensor extends ProtectDevice {
     return count > 0;
   }
 
+  // Configure the smoke and carbon monoxide sensors of a smoke detector for HomeKit, and return the sensors we have enabled. Each sensor only exists on smoke
+  // detector hardware that advertises the corresponding alarm type. There is no feature option to turn them on: smoke and carbon monoxide alarms have a direct
+  // HomeKit equivalent, and they are critical alerts in HomeKit.
+  private configureSmokeDetector(): string[] {
+
+    const alarmTypes = this.smokeAlarmTypes;
+    const enabled: string[] = [];
+    const status = this.ufp.smokeStatus;
+
+    for(const alarm of SMOKE_ALARMS) {
+
+      const characteristic = alarm.characteristic(this.hap);
+      const serviceType = alarm.serviceType(this.hap);
+
+      // Validate whether we should have this service enabled.
+      if(!this.validService(serviceType, smokeAlarmCapable(alarmTypes, alarm.alarmType))) {
+
+        // Without a service, there's no state to track. Should the sensor return, we start again from its first reading.
+        delete this.lastSmoke[alarm.alarmType];
+
+        continue;
+      }
+
+      // Acquire the service.
+      const service = this.acquireService(serviceType, this.accessoryName + alarm.name);
+
+      // Fail gracefully.
+      if(!service) {
+
+        this.log.error('Unable to add the %s sensor.', alarm.label);
+
+        continue;
+      }
+
+      // Retrieve the current alarm and fault states when requested.
+      service.getCharacteristic(characteristic).onGet(() => this.smokeAlarmState(alarm));
+      service.getCharacteristic(this.hap.Characteristic.StatusFault).onGet(() => this.smokeFaultState(alarm));
+
+      // We only update the sensor when the detector is reporting its status. When it isn't, HomeKit keeps the last state the detector reported, and we say and
+      // publish nothing: a gap in reporting must never clear an alarm that the detector really did raise.
+      if(status) {
+
+        const detected = alarm.detected(status);
+        const reasons = alarm.faultReasons(status);
+        const faults = reasons.join(',');
+        const last = this.lastSmoke[alarm.alarmType];
+
+        // Inform the user when an alarm starts or stops. On our first reading, we only do so if the alarm is already sounding.
+        if(last ? (detected !== last.detected) : detected) {
+
+          this.log.info('%s %sdetected.', alarm.label.charAt(0).toUpperCase() + alarm.label.slice(1), detected ? '' : 'no longer ');
+        }
+
+        // Inform the user when the faults being reported change. We compare the reasons rather than whether there is a fault at all, so that a detector that
+        // develops a second fault says so.
+        if(last ? (faults !== last.faults) : (reasons.length > 0)) {
+
+          if(reasons.length) {
+
+            this.log.warn('The %s sensor is reporting a fault: %s.', alarm.label, reasons.map(reason => SMOKE_FAULT_LABELS[reason]).join(', '));
+          } else {
+
+            this.log.info('The %s sensor is no longer reporting a fault.', alarm.label);
+          }
+        }
+
+        this.lastSmoke[alarm.alarmType] = { detected, faults };
+
+        // Update the sensor.
+        service.updateCharacteristic(characteristic, detected);
+        service.updateCharacteristic(this.hap.Characteristic.StatusFault, reasons.length > 0);
+
+        // Publish the state.
+        this.publish(alarm.mqtt, detected.toString());
+      }
+
+      // Update the state characteristics.
+      this.configureStateCharacteristics(service);
+
+      enabled.push(alarm.label);
+    }
+
+    // If this isn't a smoke detector, we're done.
+    if(!enabled.length) {
+
+      delete this.lastSmokeTesting;
+
+      return enabled;
+    }
+
+    if(status) {
+
+      // Inform the user when a self-test starts or ends. On our first reading, we only do so if a self-test is already under way.
+      if((this.lastSmokeTesting === undefined) ? status.testing : (status.testing !== this.lastSmokeTesting)) {
+
+        this.log.info('The smoke detector\'s self-test has %s.', status.testing ? 'started' : 'ended');
+      }
+
+      this.lastSmokeTesting = status.testing;
+
+      // Publish the full status of the detector.
+      const detectorStatus = this.smokeDetectorStatus;
+
+      if(detectorStatus !== null) {
+
+        this.publish('smokedetector', detectorStatus);
+      }
+    }
+
+    return enabled;
+  }
+
   // Configure the temperature sensor for HomeKit.
   private configureTemperatureSensor(): boolean {
 
@@ -462,6 +632,83 @@ export class ProtectSensor extends ProtectDevice {
     return value;
   }
 
+  // Get the alarm types that this sensor's smoke detector hardware advertises. A sensor that isn't a smoke detector advertises none, whatever the controller
+  // says: a sensor that only listens for the sound of alarms advertises the same alarm types that a detector does.
+  private get smokeAlarmTypes(): readonly string[] {
+
+    return smokeDetectorHardware(this.ufp) ? (this.ufp.featureFlags?.alarmTypes ?? []) : [];
+  }
+
+  // Get the current alarm state for one of the sensors of a smoke detector. When the detector isn't reporting its status, we answer with the state that HomeKit
+  // already has rather than an all-clear that the detector never sent. That includes the state restored from the accessory cache after a restart.
+  private smokeAlarmState(alarm: SmokeAlarmDefinition): boolean {
+
+    if(!smokeAlarmCapable(this.smokeAlarmTypes, alarm.alarmType)) {
+
+      return false;
+    }
+
+    if(this.ufp.smokeStatus) {
+
+      return alarm.detected(this.ufp.smokeStatus);
+    }
+
+    return !!this.accessory.getService(alarm.serviceType(this.hap))?.getCharacteristic(alarm.characteristic(this.hap)).value;
+  }
+
+  // Get the current fault state for one of the sensors of a smoke detector. As with the alarm state, we answer with what HomeKit already has when the detector
+  // isn't reporting its status.
+  private smokeFaultState(alarm: SmokeAlarmDefinition): boolean {
+
+    if(!smokeAlarmCapable(this.smokeAlarmTypes, alarm.alarmType)) {
+
+      return false;
+    }
+
+    if(this.ufp.smokeStatus) {
+
+      return alarm.faultReasons(this.ufp.smokeStatus).length > 0;
+    }
+
+    return !!this.accessory.getService(alarm.serviceType(this.hap))?.getCharacteristic(this.hap.Characteristic.StatusFault).value;
+  }
+
+  // Get the full status of a smoke detector as JSON, or null if this isn't a smoke detector or it isn't reporting its status. We build this member by member
+  // rather than passing along whatever the controller sends, so that the topic carries exactly what we document.
+  private get smokeDetectorStatus(): Nullable<string> {
+
+    const status = this.ufp.smokeStatus;
+
+    if(!status || !SMOKE_ALARMS.some(alarm => smokeAlarmCapable(this.smokeAlarmTypes, alarm.alarmType))) {
+
+      return null;
+    }
+
+    return JSON.stringify({
+
+      alarmSilenced: status.alarmSilenced,
+      alarmSilencedAt: this.ufp.alarmSilencedAt ?? null,
+      batteryLow: status.batteryLow,
+      batteryVoltage: status.batteryVoltage,
+      cleanSmokeSensor: status.cleanSmokeSensor,
+      coAlarm: status.coAlarm,
+      coAlarmTriggeredAt: this.ufp.coAlarmTriggeredAt ?? null,
+      coSensorFault: status.coSensorFault,
+      coValue: status.coValue,
+      enabled: status.enabled,
+      endOfLife: status.endOfLife,
+      ready: status.ready,
+      smokeAlarm: status.smokeAlarm,
+      smokeAlarmTriggeredAt: this.ufp.smokeAlarmTriggeredAt ?? null,
+      smokeSensorFault: status.smokeSensorFault,
+      smokeValue: status.smokeValue,
+      testing: status.testing,
+      troubleHushed: status.troubleHushed,
+      troubleSilencedAt: this.ufp.troubleSilencedAt ?? null,
+      wasMounted: status.wasMounted,
+    });
+  }
+
   // Get the current temperature information.
   private get temperature(): number {
 
@@ -478,6 +725,17 @@ export class ProtectSensor extends ProtectDevice {
     this.subscribeGet('leak', 'leak detected', () => this.leakDetected().toString());
     this.subscribeGet('leak-external', 'leak detected', () => this.leakDetected('externalLeakDetectedAt').toString());
     this.subscribeGet('temperature', 'temperature', () => this.temperature.toString());
+
+    // The smoke detector topics only exist on smoke detectors. A sensor's model never changes, so we only need to decide this once.
+    if(smokeDetectorHardware(this.ufp)) {
+
+      for(const alarm of SMOKE_ALARMS) {
+
+        this.subscribeGet(alarm.mqtt, alarm.label + ' detected', () => this.smokeAlarmState(alarm).toString());
+      }
+
+      this.subscribeGet('smokedetector', 'smoke detector', () => this.smokeDetectorStatus ?? 'null');
+    }
   }
 
   // Handle sensor-related events.
